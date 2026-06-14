@@ -1,55 +1,90 @@
 # Domain Docs
 
-How the engineering skills should consume this repo's domain documentation when
-exploring the codebase. This repo uses the **single-context** layout.
+How the engineering skills should consume domain documentation when exploring
+the codebase.
+
+This repository is an **AI agent manager / master-factory** repo that produces
+multiple separate projects under `projects/`. It uses a **multi-project** layout:
+every project owns its product docs, ADRs, and context. Root `docs/agents/` is
+shared AI team documentation only — it is **not** a project context.
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, or
-- **`CONTEXT-MAP.md`** at the repo root if it exists — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
+First identify the **active project** — the folder under `projects/` you are
+working in (e.g. `projects/todo-app/`). Then read, scoped to that project:
 
-If any of these files don't exist, **proceed silently**. Don't flag their
-absence; don't suggest creating them upfront. The producer skill
-(`/grill-with-docs`) creates them lazily when terms or decisions actually get
-resolved.
+- **`projects/<project-name>/CONTEXT.md`** — the project's domain glossary.
+- **`projects/<project-name>/docs/adr/`** — ADRs that touch the area you're about
+  to work in, for that project.
+- **`projects/<project-name>/docs/product/`** — product vision, scope, and PRDs
+  for that project.
+
+Do **not** look for `CONTEXT.md` or `docs/adr/` at the repo root — they never
+live there. Root `docs/agents/` is shared team documentation, not project
+context.
+
+A new project is created with its required skeleton up front (see **Project
+bootstrap**, below). Beyond that skeleton, if a specific ADR or glossary term
+doesn't exist yet, **proceed silently** — don't flag its absence. The producer
+skill (`/grill-with-docs`) adds more, inside the active project, when terms or
+decisions actually get resolved.
 
 ## File structure
 
-Single-context repo (this repo, once code exists):
+Master-factory layout: shared AI team docs at the root, and one self-contained
+folder per project under `projects/`.
 
 ```
 /
-├── CONTEXT.md
-├── docs/adr/
-│   ├── 0001-example-decision.md
-│   └── 0002-another-decision.md
-└── src/
-```
-
-Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
-
-```
-/
-├── CONTEXT-MAP.md
-├── docs/adr/                          ← system-wide decisions
-└── src/
-    ├── ordering/
-    │   ├── CONTEXT.md
-    │   └── docs/adr/                  ← context-specific decisions
-    └── billing/
+├── AGENTS.md                     ← shared AI team rules
+├── CLAUDE.md                     ← shared Claude guidance
+├── .claude/                      ← shared agents, skills, workflows, templates
+├── docs/
+│   └── agents/                   ← shared AI team / workflow docs ONLY
+└── projects/
+    ├── todo-app/
+    │   ├── CONTEXT.md            ← this project's domain glossary (required at bootstrap)
+    │   ├── docs/
+    │   │   ├── product/          ← this project's vision, scope, PRDs
+    │   │   └── adr/              ← this project's architecture decisions
+    │   └── ...                   ← this project's app code
+    └── another-app/
         ├── CONTEXT.md
-        └── docs/adr/
+        ├── docs/
+        │   ├── product/
+        │   └── adr/
+        └── ...
 ```
 
-> Note: `CONTEXT.md` and `docs/adr/` do not exist yet and are intentionally not
-> created during this setup. They are produced lazily later by `/grill-with-docs`.
+Notes:
+
+- There is **no** root-level `docs/product/` and **no** root-level `docs/adr/`.
+- Each project's docs are produced lazily (by `/grill-with-docs`, `/to-prd`,
+  etc.) **inside that project**, only when decisions or terms get resolved.
+
+## Project bootstrap (required skeleton)
+
+Every project under `projects/<project-name>/` starts from a required skeleton,
+created **before any implementation begins** (see the "Project bootstrap rule"
+in `AGENTS.md`):
+
+- `CONTEXT.md`
+- `README.md`
+- `docs/product/00-product-vision.md`
+- `docs/product/01-users-and-roles.md`
+- `docs/product/02-core-flows.md`
+- `docs/product/03-feature-scope.md`
+- `docs/product/04-prd-first-slice.md`
+- `docs/adr/0001-technical-baseline.md`
+
+All paths are relative to `projects/<project-name>/`. None of these are ever
+created at the repo root — there is no root-level `docs/product/` or `docs/adr/`.
 
 ## Use the glossary's vocabulary
 
 When your output names a domain concept (in an issue title, a refactor proposal,
-a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift
-to synonyms the glossary explicitly avoids.
+a hypothesis, a test name), use the term as defined in the active project's
+`CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
 
 If the concept you need isn't in the glossary yet, that's a signal — either
 you're inventing language the project doesn't use (reconsider) or there's a real

@@ -55,12 +55,41 @@ re-read this file before acting.
 
 - **Do not modify architecture without explicit approval.** Boundaries, data
   ownership, auth model, and tech stack are not changed casually.
-- **Do not create product or architecture docs unless explicitly asked.**
-  No `docs/product/` and no `docs/adr/` until requested.
+- **Do not create product or architecture docs at the repo root.**
+  Root `docs/` is for AI team / workflow docs only — never create root-level
+  `docs/product/` or root-level `docs/adr/`. A project's product docs, ADRs, and
+  `CONTEXT.md` live inside that project under `projects/<project-name>/`
+  (see "Documentation layout" under Agent skills).
 - **Do not implement features without a clear issue or task.**
 - **Do not install packages or add dependencies** without explicit approval.
 - **Do not invent requirements.** If it is not specified, ask.
 - **Do not leave the codebase in a broken state.**
+
+---
+
+## Project bootstrap rule
+
+Every generated project under `projects/<project-name>/` must start from a
+required documentation skeleton, created **before any implementation begins**.
+These files must exist inside the project folder:
+
+- `projects/<project-name>/CONTEXT.md`
+- `projects/<project-name>/README.md`
+- `projects/<project-name>/docs/product/00-product-vision.md`
+- `projects/<project-name>/docs/product/01-users-and-roles.md`
+- `projects/<project-name>/docs/product/02-core-flows.md`
+- `projects/<project-name>/docs/product/03-feature-scope.md`
+- `projects/<project-name>/docs/product/04-prd-first-slice.md`
+- `projects/<project-name>/docs/adr/0001-technical-baseline.md`
+
+Rules:
+
+- **All skeleton files live inside `projects/<project-name>/`.** Never create
+  root-level `docs/product/` or root-level `docs/adr/`.
+- **No implementation may begin until this skeleton exists.** The WebApp
+  Orchestrator blocks build work until it is in place.
+- Beyond the skeleton, further ADRs and glossary terms are added later, inside
+  the project, as decisions get resolved.
 
 ---
 
@@ -125,10 +154,27 @@ Five canonical triage roles map 1:1 to label strings (`needs-triage`,
 
 ### Domain docs
 
-**Single-context** layout. `CONTEXT.md` / `docs/adr/` are created lazily later
-(not now). See `docs/agents/domain.md`.
+**Multi-project** layout — this is a master-factory repo. Each project owns its
+own `CONTEXT.md`, `docs/product/`, and `docs/adr/` under
+`projects/<project-name>/`; root `docs/` holds shared AI team docs only. See
+`docs/agents/domain.md`.
 
 ### Skill ↔ agent alignment
 
 How installed skills map to our agents and workflows. See
 `docs/agents/skill-alignment.md`.
+
+### Documentation layout
+
+This repository is an **AI agent manager / master-factory** repo: it creates and
+manages multiple separate web app projects under `projects/`.
+
+- **Root `docs/` is for AI agent / team documentation only** (e.g.
+  `docs/agents/`). It is shared across all projects.
+- **Never create root-level `docs/product/` or root-level `docs/adr/`.**
+- **Each generated project keeps its own docs**, scoped to that project:
+  - `projects/<project-name>/docs/product/` — product vision, scope, PRDs
+  - `projects/<project-name>/docs/adr/` — that project's architecture decisions
+  - `projects/<project-name>/CONTEXT.md` — that project's domain context (part of the required bootstrap skeleton)
+- Shared team assets (`AGENTS.md`, `CLAUDE.md`, `.claude/`, `docs/agents/`) stay
+  at the repo root and are never copied into a project.
