@@ -8,7 +8,10 @@
 - **Project:** `pepper-st-dashboard`
 - **Status:** Phase 1 — Slices 0–7C built (dense real-data **Dashboard** [KPIs + charts + recent], Chat Monitor [lazy-loaded `○ Static` shell, full-height workspace], Analytics report [two real charts]; full-page SaaS layout, real-data only, no document scroll)
 - **Last updated:** 2026-06-15
-- **Stage:** Phase 1 build complete — read-only over Agno; migration applied + seeded; UI live
+- **Stage:** Phase 1 build complete — read-only over Agno; migration applied + seeded; UI live.
+  **Gate 8 (acceptance) ✅ PASS** and **Gate 9 (deploy readiness) ✅ PASS** — recommended target:
+  self-host (Node/Docker) adjacent to the Agno PostgreSQL; not yet deployed (awaiting approval). See
+  `docs/deployment/01-deploy-readiness.md` + ADR-0010 (Proposed).
 - **Stack (locked):** Next.js + TypeScript + Tailwind + **shadcn/ui** (restyled to
   match the demo UI) + **Drizzle ORM** + PostgreSQL + **Zod**. Migrations via
   **Drizzle**; raw `pg` only as Drizzle's driver. See `docs/architecture/05-tech-stack.md`.

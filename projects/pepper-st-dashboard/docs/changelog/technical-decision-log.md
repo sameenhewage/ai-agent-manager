@@ -10,6 +10,28 @@
 
 ---
 
+## 2026-06-15 — Gate 9: Deploy readiness / deploy-target recommendation (no app code changes)
+
+### TD-063 — Recommend self-hosted long-running Node/Docker (adjacent to Agno PostgreSQL)
+Gate 9 is a decision gate — **no app code changed, nothing deployed, no prod migrate/seed**. Reviewed
+the runtime shape: `/` + `/analytics` are `force-dynamic` (per-request PG reads), `/chat-monitor` is a
+`○ Static` shell + two `no-store` API routes, all backed by a **singleton `pg` pool** (`lib/db/client.ts`,
+no explicit `ssl`/`max`) against the **same PostgreSQL that hosts read-only `ai.agno_sessions`** (which
+holds PII — phone-number session ids). Because that DB is shared + sensitive and the pool is a warm
+singleton, the recommended target is a **single long-running Node process (self-host: VPS/Docker/`next
+start`) co-located on the Agno DB's private network** for both demo and (hardened) production —
+**not** serverless (which would churn per-invocation pools on a shared PII DB and need a pooler +
+public DB exposure). Production hardening tracked separately: `output:'standalone'`, read-only `ai.*`
+DB role, explicit pool SSL + bounded `max`, PgBouncer at scale, the deferred analytics rollup, and real
+auth replacing `DEMO_TENANT_SLUG`. Env contract confirmed minimal + server-only (`DATABASE_URL` secret,
+optional `DEMO_TENANT_SLUG`; **no `NEXT_PUBLIC_*`**; `db/client` never imported client-side). Re-ran
+typecheck + 106 tests + build green; prod `next start` browser smoke (3 surfaces) clean (only favicon
+404). Boundaries re-confirmed: `ai.*` read-only, **no WhatsApp/AI-send code**, no DB writes during
+checks, no fake metrics, no transcript duplication. **Verdict: Gate 9 PASS** (ready to deploy after
+approval). -> `docs/deployment/01-deploy-readiness.md`, `docs/adr/0010-deployment-target.md` (Proposed).
+
+---
+
 ## 2026-06-15 — Slice 7C: Dashboard + Analytics visual/product parity (no new features)
 
 ### TD-061 — Dashboard rebuilt as a dense, real-data operations console

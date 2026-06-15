@@ -91,6 +91,7 @@ chat, rich AI metadata. See `roadmap.md`.
 | 3 | Tech stack (`docs/architecture/05-tech-stack.md`) | ✅ locked |
 | 4 | Per-slice QA + docs/handoff update | per slice |
 | 8 | **Phase 1 acceptance review** — product / UI / data / security-PII / performance / docs across Dashboard, Chat Monitor, Analytics (no blockers) | ✅ PASS (2026-06-15) |
+| 9 | **Deploy readiness / deploy-target decision** — options, DB/env readiness, boundaries, risks, checklist (decision gate; nothing deployed) | ✅ PASS (2026-06-15) — recommend self-host adjacent to Agno PG; see `docs/deployment/01-deploy-readiness.md`, ADR-0010 (Proposed) |
 
 ## Acceptance (phase-level)
 
