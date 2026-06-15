@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Service Booking Manager</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Service Booking Manager</h1>
+      <p class="app-subtitle">Customers, Services &amp; Bookings</p>
+    </header>
+
+    <main class="container">
+      <!-- Dashboard -->
+      <section class="card card--full dashboard" aria-labelledby="dashboard-heading">
+        <h2 id="dashboard-heading">Dashboard</h2>
+        <div class="stats">
+          <div class="stat">
+            <span class="stat__num" id="dash-customers">0</span>
+            <span class="stat__label">Customers</span>
+          </div>
+          <div class="stat">
+            <span class="stat__num" id="dash-services">0</span>
+            <span class="stat__label">Services</span>
+          </div>
+          <div class="stat">
+            <span class="stat__num" id="dash-bookings">0</span>
+            <span class="stat__label">Bookings</span>
+          </div>
+          <div class="stat stat--pending">
+            <span class="stat__num" id="dash-pending">0</span>
+            <span class="stat__label">Pending</span>
+          </div>
+          <div class="stat stat--confirmed">
+            <span class="stat__num" id="dash-confirmed">0</span>
+            <span class="stat__label">Confirmed</span>
+          </div>
+          <div class="stat stat--completed">
+            <span class="stat__num" id="dash-completed">0</span>
+            <span class="stat__label">Completed</span>
+          </div>
+          <div class="stat stat--cancelled">
+            <span class="stat__num" id="dash-cancelled">0</span>
+            <span class="stat__label">Cancelled</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Customers -->
+      <section class="card" aria-labelledby="customers-heading">
+        <h2 id="customers-heading">Customers</h2>
+        <form id="customer-form" class="form" novalidate>
+          <div class="field">
+            <label for="customer-name">Name <span class="req">*</span></label>
+            <input id="customer-name" name="name" type="text" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="customer-phone">Phone</label>
+            <input id="customer-phone" name="phone" type="text" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="customer-email">Email</label>
+            <input id="customer-email" name="email" type="text" autocomplete="off" />
+          </div>
+          <div class="form-actions">
+            <button type="submit">Add customer</button>
+            <p id="customer-error" class="error" role="alert" aria-live="polite"></p>
+          </div>
+        </form>
+        <p id="customer-empty" class="empty">No customers yet.</p>
+        <ul id="customer-list" class="list" aria-label="Customers"></ul>
+      </section>
+
+      <!-- Services -->
+      <section class="card" aria-labelledby="services-heading">
+        <h2 id="services-heading">Services</h2>
+        <form id="service-form" class="form" novalidate>
+          <div class="field">
+            <label for="service-name">Name <span class="req">*</span></label>
+            <input id="service-name" name="name" type="text" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="service-duration">Duration (min)</label>
+            <input id="service-duration" name="durationMinutes" type="number" min="0" step="1" inputmode="numeric" />
+          </div>
+          <div class="field">
+            <label for="service-price">Price</label>
+            <input id="service-price" name="price" type="number" min="0" step="0.01" inputmode="decimal" />
+          </div>
+          <div class="form-actions">
+            <button type="submit">Add service</button>
+            <p id="service-error" class="error" role="alert" aria-live="polite"></p>
+          </div>
+        </form>
+        <p id="service-empty" class="empty">No services yet.</p>
+        <ul id="service-list" class="list" aria-label="Services"></ul>
+      </section>
+
+      <!-- Bookings -->
+      <section class="card card--full" aria-labelledby="bookings-heading">
+        <h2 id="bookings-heading">Bookings</h2>
+        <p id="booking-hint" class="hint" role="status" hidden></p>
+        <form id="booking-form" class="form form--row" novalidate>
+          <div class="field">
+            <label for="booking-customer">Customer <span class="req">*</span></label>
+            <select id="booking-customer" name="customerId">
+              <option value="">Select a customer</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="booking-service">Service <span class="req">*</span></label>
+            <select id="booking-service" name="serviceId">
+              <option value="">Select a service</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="booking-datetime">Date &amp; time <span class="req">*</span></label>
+            <input id="booking-datetime" name="dateTime" type="datetime-local" />
+          </div>
+          <div class="form-actions">
+            <button id="booking-submit" type="submit">Add booking</button>
+            <p id="booking-error" class="error" role="alert" aria-live="polite"></p>
+          </div>
+        </form>
+        <p id="booking-empty" class="empty">No bookings yet.</p>
+        <ul id="booking-list" class="list" aria-label="Bookings"></ul>
+      </section>
+    </main>
+
+    <script src="logic.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
