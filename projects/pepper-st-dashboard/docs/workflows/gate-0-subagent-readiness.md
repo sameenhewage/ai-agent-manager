@@ -21,8 +21,9 @@ gate passes.
    workflows in `docs/workflows/`, and `docs/templates/`.
 4. Confirm docs reference the global agents by their **exact** filenames and that
    **no duplicate** global agents were created.
-5. Record skills status (global `.claude/skills/` empty → **parked**; optional,
-   non-blocking).
+5. Record skills status: skills are **installed/active** in `.claude/skills/` (each with
+   a `SKILL.md`), used via root governance (`AGENTS.md`, `CLAUDE.md`,
+   `docs/agents/skill-alignment.md`). Do not duplicate skills into project docs.
 
 ## Approval gate
 

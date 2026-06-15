@@ -59,7 +59,9 @@
    `agent-boundaries.md`), `workflows/` (gate-0, phase-1-slice, schema-migration-review,
    qa-handoff), and `templates/` (slice-plan, slice-handoff, qa-report,
    migration-proposal). **No global agents duplicated or modified;** global `.claude/`
-   kept generic. Skills **parked** (global `.claude/skills/` empty; optional). Docs-only.
+   kept generic. (Skills note **superseded**: the global `.claude/skills/` are
+   installed/active and used via root governance — see `docs/agents/README.md` → Skills.)
+   Docs-only.
 
 ## Files changed (created)
 
@@ -131,7 +133,7 @@ See `changelog/technical-decision-log.md` (TD-001…TD-043) for the full list.
 
 - **Gate 0 — Subagent readiness:** ✅ **PASS (2026-06-15).** Global agents present &
   usable; PEPPER ST. coordination created under `docs/{agents,workflows,templates}`;
-  skills parked. See `docs/agents/README.md`.
+  skills installed/active (used via root governance). See `docs/agents/README.md`.
 - **Gate 2 — Schema migration approval:** ⛔ pending. Author the **Drizzle schema**
   to match `02-schema-proposal.sql.md`; **propose** migrations (apply only after
   approval).

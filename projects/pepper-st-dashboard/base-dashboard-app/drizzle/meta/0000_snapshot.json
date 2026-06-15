@@ -1,0 +1,767 @@
+{
+  "id": "93c19054-485b-4197-8778-6e5d83dfb023",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "dashboard.app_channels": {
+      "name": "app_channels",
+      "schema": "dashboard",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "channel_key": {
+          "name": "channel_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_agent_id": {
+          "name": "source_agent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_team_id": {
+          "name": "source_team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_business_id": {
+          "name": "external_business_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_phone_number_id": {
+          "name": "external_phone_number_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "app_channels_tenant_idx": {
+          "name": "app_channels_tenant_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "app_channels_tenant_id_app_tenants_id_fk": {
+          "name": "app_channels_tenant_id_app_tenants_id_fk",
+          "tableFrom": "app_channels",
+          "tableTo": "app_tenants",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "app_channels_tenant_channel_key": {
+          "name": "app_channels_tenant_channel_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "channel_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "dashboard.app_conversations": {
+      "name": "app_conversations",
+      "schema": "dashboard",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_identity_id": {
+          "name": "customer_identity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "agno_session_id": {
+          "name": "agno_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_contact_id": {
+          "name": "external_contact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "first_at": {
+          "name": "first_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_at": {
+          "name": "last_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "app_conv_tenant_last_idx": {
+          "name": "app_conv_tenant_last_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "app_conv_customer_idx": {
+          "name": "app_conv_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "app_conv_identity_idx": {
+          "name": "app_conv_identity_idx",
+          "columns": [
+            {
+              "expression": "customer_identity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "app_conv_contact_idx": {
+          "name": "app_conv_contact_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "channel_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "external_contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "app_conversations_tenant_id_app_tenants_id_fk": {
+          "name": "app_conversations_tenant_id_app_tenants_id_fk",
+          "tableFrom": "app_conversations",
+          "tableTo": "app_tenants",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "app_conversations_customer_id_app_customers_id_fk": {
+          "name": "app_conversations_customer_id_app_customers_id_fk",
+          "tableFrom": "app_conversations",
+          "tableTo": "app_customers",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "app_conversations_customer_identity_id_app_customer_identities_id_fk": {
+          "name": "app_conversations_customer_identity_id_app_customer_identities_id_fk",
+          "tableFrom": "app_conversations",
+          "tableTo": "app_customer_identities",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "customer_identity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "app_conversations_channel_id_app_channels_id_fk": {
+          "name": "app_conversations_channel_id_app_channels_id_fk",
+          "tableFrom": "app_conversations",
+          "tableTo": "app_channels",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "app_conv_agno_unique": {
+          "name": "app_conv_agno_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "channel_id",
+            "agno_session_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "app_conv_status_check": {
+          "name": "app_conv_status_check",
+          "value": "\"dashboard\".\"app_conversations\".\"status\" in ('open','resolved','archived')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "dashboard.app_customer_identities": {
+      "name": "app_customer_identities",
+      "schema": "dashboard",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_contact_id": {
+          "name": "external_contact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "app_cust_ident_customer_idx": {
+          "name": "app_cust_ident_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "app_customer_identities_tenant_id_app_tenants_id_fk": {
+          "name": "app_customer_identities_tenant_id_app_tenants_id_fk",
+          "tableFrom": "app_customer_identities",
+          "tableTo": "app_tenants",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "app_customer_identities_customer_id_app_customers_id_fk": {
+          "name": "app_customer_identities_customer_id_app_customers_id_fk",
+          "tableFrom": "app_customer_identities",
+          "tableTo": "app_customers",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "app_customer_identities_channel_id_app_channels_id_fk": {
+          "name": "app_customer_identities_channel_id_app_channels_id_fk",
+          "tableFrom": "app_customer_identities",
+          "tableTo": "app_channels",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "app_cust_ident_unique": {
+          "name": "app_cust_ident_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "channel_id",
+            "external_contact_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "dashboard.app_customers": {
+      "name": "app_customers",
+      "schema": "dashboard",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "app_customers_tenant_idx": {
+          "name": "app_customers_tenant_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "app_customers_tenant_id_app_tenants_id_fk": {
+          "name": "app_customers_tenant_id_app_tenants_id_fk",
+          "tableFrom": "app_customers",
+          "tableTo": "app_tenants",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "dashboard.app_tenant_entitlements": {
+      "name": "app_tenant_entitlements",
+      "schema": "dashboard",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "plan_code": {
+          "name": "plan_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_fully_enabled": {
+          "name": "is_fully_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "raw_history_retention_days": {
+          "name": "raw_history_retention_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "analytics_retention_days": {
+          "name": "analytics_retention_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "app_tenant_entitlements_tenant_id_app_tenants_id_fk": {
+          "name": "app_tenant_entitlements_tenant_id_app_tenants_id_fk",
+          "tableFrom": "app_tenant_entitlements",
+          "tableTo": "app_tenants",
+          "schemaTo": "dashboard",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "app_tenant_entitlements_tenant_key": {
+          "name": "app_tenant_entitlements_tenant_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "app_tenant_entitlements_raw_retention_check": {
+          "name": "app_tenant_entitlements_raw_retention_check",
+          "value": "\"dashboard\".\"app_tenant_entitlements\".\"raw_history_retention_days\" is null or \"dashboard\".\"app_tenant_entitlements\".\"raw_history_retention_days\" > 0"
+        },
+        "app_tenant_entitlements_analytics_retention_check": {
+          "name": "app_tenant_entitlements_analytics_retention_check",
+          "value": "\"dashboard\".\"app_tenant_entitlements\".\"analytics_retention_days\" is null or \"dashboard\".\"app_tenant_entitlements\".\"analytics_retention_days\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "dashboard.app_tenants": {
+      "name": "app_tenants",
+      "schema": "dashboard",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "onboarding_status": {
+          "name": "onboarding_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Asia/Colombo'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "app_tenants_slug_key": {
+          "name": "app_tenants_slug_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "slug"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "app_tenants_status_check": {
+          "name": "app_tenants_status_check",
+          "value": "\"dashboard\".\"app_tenants\".\"status\" in ('active','suspended','archived')"
+        },
+        "app_tenants_onboarding_status_check": {
+          "name": "app_tenants_onboarding_status_check",
+          "value": "\"dashboard\".\"app_tenants\".\"onboarding_status\" in ('pending','in_progress','complete')"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "dashboard": "dashboard"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

@@ -4,6 +4,9 @@
 - **Status:** Phase 1 (docs-first) — **PROPOSAL ONLY**
 - **Last updated:** 2026-06-15
 - **Related:** ADR-0001, ADR-0002, ADR-0003, ADR-0006, ADR-0008
+- **Drizzle parity (Slice 2, 2026-06-15):** implemented as Drizzle ORM in
+  `base-dashboard-app/lib/db/schema.ts`; migration `0000` **generated, not applied**.
+  Parity table + Gate 2 package: `migration-proposal-0000.md`.
 
 > ## ⛔ DO NOT APPLY
 > This SQL is a **reviewable proposal**. It has **not** been run. No `dashboard`

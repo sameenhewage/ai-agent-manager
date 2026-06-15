@@ -1,7 +1,8 @@
 # 04 — PRD: First Vertical Slice
 
 - **Project:** pepper-st-dashboard
-- **Status:** Phase 1 (docs-first) — **PRD for the first build slice (not started)**
+- **Status:** ✅ **Delivered (Slice 5, 2026-06-15)** — Chat Monitor live on real data
+  (see `docs/handoff/2026-06-15-slice-5-chat-monitor.md`)
 - **Last updated:** 2026-06-15
 
 > This PRD describes the **first vertical slice** to build **after** the

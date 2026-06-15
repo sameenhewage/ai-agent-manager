@@ -1,8 +1,9 @@
 # Phase 1 — Implementation Plan (Build Slices)
 
 - **Project:** pepper-st-dashboard
-- **Status:** **Planning only** — no application code, no migrations, no DB changes
-  until the gates below pass. This document defines *how* Phase 1 gets built.
+- **Status:** **In build** — Slices 0–5 implemented (app shell → Drizzle schema → migration
+  applied + seed → Agno parser/mapping → **Chat Monitor live on real data**). Gates 0–4
+  satisfied; Slice 6 (Analytics) next. This document defines *how* Phase 1 gets built.
 - **Last updated:** 2026-06-15
 - **Related:** `docs/phases/phase-1.md`, `docs/product/04-prd-first-slice.md`,
   `docs/architecture/02-schema-proposal.sql.md`, `docs/architecture/05-tech-stack.md`,
@@ -20,7 +21,7 @@ Every slice is described with the same nine fields:
 
 - **Goal** — the single outcome the slice delivers.
 - **Owner / subagent** — the intended `.claude/agents/*` role that leads it.
-- **Files likely touched** — *proposed* paths (the repo has no app code yet).
+- **Files likely touched** — *proposed* paths (actual implemented paths may differ slightly).
 - **In scope** — what the slice includes.
 - **Out of scope** — what it deliberately excludes (deferred to a later slice/phase).
 - **Tests / validation** — how we prove it works (Vitest unit + Playwright E2E).
@@ -40,9 +41,9 @@ shadcn/ui (restyled, not default theme) · Drizzle ORM (+ `drizzle-kit` migratio
 
 | Gate | What | Status |
 |---|---|---|
-| **0** | **Subagent readiness** — global agents present + PEPPER ST. coordination created (`docs/agents,workflows,templates`); skills parked | ✅ **PASS (2026-06-15)** |
+| **0** | **Subagent readiness** — global agents present + PEPPER ST. coordination created (`docs/agents,workflows,templates`); skills installed/active (root governance) | ✅ **PASS (2026-06-15)** |
 | 1 | Stage 1 analysis approved | ✅ done |
-| 2 | Approve `dashboard` schema migration (Drizzle schema + migrations matching the SQL proposal) | ⛔ pending |
+| 2 | Approve `dashboard` schema migration (Drizzle schema + migrations matching the SQL proposal) | ✅ approved + applied (Slice 3, 2026-06-15) |
 | 3 | Tech stack (`05-tech-stack.md`) | ✅ locked |
 | 4 | Per-slice QA + docs/handoff update | per slice |
 
@@ -129,6 +130,11 @@ shadcn/ui (restyled, not default theme) · Drizzle ORM (+ `drizzle-kit` migratio
 
 ## Slice 2 — Drizzle schema / migration proposal
 
+- **Status:** ✅ **Implemented (2026-06-15)** — Drizzle schema + generated migration
+  `0000` in `base-dashboard-app/` (**PROPOSED, not applied**; no DB connection). Typecheck
+  + **39 tests** + build green (Node 20). **Gate 2 pending** — see
+  `docs/architecture/migration-proposal-0000.md` and
+  `docs/handoff/2026-06-15-slice-2-drizzle-schema.md`.
 - **Goal:** Author the **Drizzle schema** that matches the approved SQL design and a
   **migration proposal** — **without applying** it.
 - **Owner / subagent:** Solution Architect (authors), Fullstack Builder (implements).
@@ -160,6 +166,11 @@ shadcn/ui (restyled, not default theme) · Drizzle ORM (+ `drizzle-kit` migratio
 
 ## Slice 3 — Seed and tenant context
 
+- **Status:** ✅ **Implemented (2026-06-15)** — migration `0000` **applied** to the real DB;
+  PEPPER ST. + `whatsapp-main`/`concierge` + enterprise/unlimited entitlement **seeded**
+  (idempotent); demo tenant resolver added; read-only `db:verify` PASSED; `ai.*` untouched.
+  Typecheck + 45 tests + build green (Node 20). See
+  `docs/handoff/2026-06-15-slice-3-apply-seed-tenant.md`.
 - **Goal:** With Gate 2 approved, apply the migration and seed PEPPER ST.; establish a
   demo `current_tenant_id` strategy.
 - **Owner / subagent:** Fullstack Builder.
@@ -187,6 +198,12 @@ shadcn/ui (restyled, not default theme) · Drizzle ORM (+ `drizzle-kit` migratio
 
 ## Slice 4 — Agno transcript parser / service
 
+- **Status:** ✅ **Implemented (2026-06-15)** — read-only parser (`lib/agno/parser.ts`) +
+  shared masker (`lib/agno/mask.ts`) + pure mapping helpers (`lib/agno/mapping.ts`) +
+  idempotent mapping sync (`lib/agno/sync.ts`). Applied to the real DB: 13 `concierge`
+  sessions → 13 conversations/customers/identities; re-run idempotent (0 new). Read-only on
+  `ai.*`; no transcript persisted; ids masked. Typecheck + 66 tests + build green (Node 20).
+  See `docs/handoff/2026-06-15-slice-4-agno-parser-mapping.md`.
 - **Goal:** A typed, read-only service that turns one `ai.agno_sessions` row into a
   clean transcript — **no message duplication**.
 - **Owner / subagent:** Fullstack Builder.
@@ -215,6 +232,16 @@ shadcn/ui (restyled, not default theme) · Drizzle ORM (+ `drizzle-kit` migratio
 
 ## Slice 5 — Chat Monitor
 
+- **Status:** ✅ **Implemented (2026-06-15)** — server-first page
+  `app/(dashboard)/chat-monitor/page.tsx` (`force-dynamic`) → `lib/chat-monitor/service.ts`
+  (dashboard reads + `ai.agno_sessions` read-only, transcripts parsed in memory) → pure
+  `lib/chat-monitor/presenter.ts` (masking, `last_at` desc ordering, retention windowing,
+  transcript view-state) → client `components/chat-monitor/chat-monitor.tsx` (selection +
+  mobile toggle only). 13 PEPPER ST. conversations render with masked ids, turn/msg counts,
+  live transcript (system excluded, deduped, ordered); empty/restricted/error states; no
+  fabricated fields. TDD: 10 presenter tests (76 total). Verified in-browser + read-only
+  `db:chat:verify` (no raw id leaks). `ai.*` untouched; nothing persisted. See
+  `docs/handoff/2026-06-15-slice-5-chat-monitor.md`.
 - **Goal:** Tenant-scoped conversation **list** + **detail/transcript** rendered live
   from Agno, honoring retention/access — **no human reply**.
 - **Owner / subagent:** Fullstack Builder + QA Review.

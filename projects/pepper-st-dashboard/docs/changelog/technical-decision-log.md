@@ -10,6 +10,106 @@
 
 ---
 
+## 2026-06-15 — Slice 5: Chat Monitor (live, read-only, masked)
+
+### TD-053 — Chat Monitor presenter + server data service (Slice 5)
+Pure `lib/chat-monitor/presenter.ts` shapes the UI payload: `maskContactId` on every contact,
+`last_at`-desc ordering, retention windowing (`isWithinRetention`; **NULL = unlimited**;
+out-of-window excluded + counted), and transcript view-state (`ok|empty|restricted`). Server
+`lib/chat-monitor/service.ts` resolves PEPPER ST. (Slice 3 resolver) + `whatsapp-main`, reads
+dashboard mappings + `ai.agno_sessions` **read-only**, parses transcripts in memory (Slice 4
+parser, retention applied), and returns a fully-masked, serializable payload (no raw
+contact/session id, no DB handle). TDD: 10 presenter tests (76 total). ->
+`lib/chat-monitor/{presenter,service}.ts` (+ `presenter.test.ts`).
+
+### TD-054 — Server-first Chat Monitor page + client UI (Slice 5)
+`app/(dashboard)/chat-monitor/page.tsx` is a `force-dynamic` Server Component (so `build` never
+opens a DB connection) with error/empty states; client `components/chat-monitor/chat-monitor.tsx`
+holds only selection + mobile-toggle state and renders the masked list + live transcript
+(Customer/AI bubbles; empty/restricted states; deterministic UTC timestamps to avoid hydration
+drift). Read-only `db:chat:verify` proves no raw id leaks into the payload. Verified in-browser
+(13 conversations, masked, real transcript, no fabricated metrics); `ai.*` untouched; no transcript
+persisted. -> `app/(dashboard)/chat-monitor/page.tsx`, `components/chat-monitor/chat-monitor.tsx`,
+`scripts/chat-monitor-verify.ts`, `package.json`.
+
+---
+
+## 2026-06-15 — Slice 4: Agno transcript parser/service + mapping sync
+
+### TD-051 — Read-only Agno transcript parser + shared PII masker (Slice 4)
+Added pure, in-memory modules under `base-dashboard-app/lib/agno/`: `parser.ts`
+(`parseTranscript` — flatten `runs[].messages[]`, exclude `system`, drop `from_history`,
+dedupe by id, retention cutoff [`NULL` = unlimited], order by `created_at`, hide tool
+messages + never expose raw tool args, derive message/turn counts + last activity),
+`mask.ts` (country-agnostic `maskContactId` for UI **and** logs; never logs a raw phone),
+and `mapping.ts` (active exactly-one channel resolution; conversation values with
+`agno_session_id` as text). TDD: specs first (RED→GREEN), 21 Agno tests; 66/66 total.
+-> `lib/agno/{types,parser,mask,mapping}.ts` (+ tests),
+`handoff/2026-06-15-slice-4-agno-parser-mapping.md`.
+
+### TD-052 — Idempotent Agno→dashboard mapping sync applied (Slice 4)
+`lib/agno/sync.ts` reads `ai.agno_sessions` (agent `concierge`) **read-only** and upserts
+ONLY `app_customers` / `app_customer_identities` / `app_conversations` (find-or-create on the
+composite uniques; `first_at`/`last_at` from epoch; `status='open'`). Scripts:
+`db:agno:inspect` (read-only, masked), `db:agno:sync`, `db:agno:verify` (read-only). Applied
+to the real DB: **13** concierge sessions → 13 conversations/customers/identities; re-run
+created **0** (idempotent). Verify ALL PASS; `ai.*` untouched; no forbidden/message tables;
+no transcript persisted; ids masked in all output. -> `lib/agno/sync.ts`,
+`scripts/agno-{inspect,sync,verify}.ts`, `package.json`.
+
+---
+
+## 2026-06-15 — Slice 3: migration applied + PEPPER ST. seeded + tenant context
+
+### TD-048 — Server-side DB access + idempotent seed + demo tenant resolver (Slice 3)
+Added `base-dashboard-app/lib/db/client.ts` (pg Pool + Drizzle from `DATABASE_URL`, masked
+logging), `lib/db/seed.ts` (pure `buildSeedPayload()` + idempotent `seedPepperSt(db)` via
+`onConflictDoNothing`), and `lib/tenant/context.ts` (Phase-1 demo resolver by slug
+`pepper-st`; temporary stand-in for auth). Unit-tested without DB (45/45). Secrets via a
+gitignored `.env`; `.env.example` added. -> `lib/{db,tenant}/*`, `scripts/{seed,verify}.ts`,
+`handoff/2026-06-15-slice-3-apply-seed-tenant.md`.
+
+### TD-049 — Gate-2 migration applied to the real DB + verified (Slice 3)
+Enabled apply (env-gated `dbCredentials` in `drizzle.config.ts`; scripts `db:migrate` /
+`db:seed` / `db:verify`; never `push`). Applied `0000` -> created `dashboard` + 6 `app_*`
+tables; seeded PEPPER ST. tenant + `whatsapp-main`/`concierge` channel + enterprise
+entitlement (retention `NULL` = unlimited). Read-only `db:verify` PASSED all checks; `ai.*`
+untouched; no forbidden tables. drizzle-kit created its standard `drizzle.__drizzle_migrations`
+ledger (outside `dashboard`). -> `drizzle.config.ts`, `package.json`, `migration-proposal-0000.md`.
+
+### TD-050 — Stale "Skills parked" project docs corrected (no governance duplication)
+Replaced the stale "skills empty/parked/optional" wording in `docs/agents/README.md`,
+`docs/workflows/gate-0-subagent-readiness.md`, and the stage-1 handoff with a factual
+pointer to **root** governance (`AGENTS.md`, `CLAUDE.md`, `docs/agents/skill-alignment.md`,
+`.claude/skills/*/SKILL.md`). No skills/governance duplicated into project docs.
+
+---
+
+## 2026-06-15 — Slice 2: Drizzle schema + migration proposal (PROPOSED, not applied)
+
+### TD-046 — Dashboard Drizzle schema authored to match the SQL proposal (Slice 2)
+Implemented the dashboard-owned Drizzle schema (`base-dashboard-app/lib/db/schema.ts`):
+the 6 `dashboard.app_*` tables exactly matching `02-schema-proposal.sql.md` — slug-unique
+tenants (+ `timezone` default `Asia/Colombo`), `(tenant_id, channel_key)` channel
+uniqueness, customer-identity uniqueness `(tenant_id, channel_id, external_contact_id)`,
+conversation mapping with `agno_session_id` as **text and no FK into `ai.*`**, and 1:1
+`app_tenant_entitlements` with **no hidden defaults** (plan_code / is_fully_enabled NOT
+NULL; retention nullable; `NULL` = unlimited). TDD: schema-shape + migration specs first
+(RED→GREEN), **39/39** tests, typecheck + build green (Node 20).
+-> `base-dashboard-app/{lib/db/schema.ts,lib/db/schema.test.ts,lib/db/migration.test.ts}`,
+`handoff/2026-06-15-slice-2-drizzle-schema.md`.
+
+### TD-047 — Migration generated for review only; apply is Gate-2-gated (Slice 2)
+Used a **generate-only** Drizzle setup: `drizzle.config.ts` has **no `dbCredentials`** and
+only a `db:generate` script (no `migrate`/`push`, no DB driver), so no connection can
+happen. `drizzle-kit generate` produced `drizzle/0000_perpetual_james_howlett.sql` (DDL
+only — no seed). Parity reviewed vs the SQL proposal and packaged for **Gate 2** in
+`docs/architecture/migration-proposal-0000.md`. Nothing applied; `ai.agno_*` untouched.
+-> `base-dashboard-app/{drizzle.config.ts,drizzle/0000_*.sql,package.json}`,
+`architecture/migration-proposal-0000.md`.
+
+---
+
 ## 2026-06-15 — Slice 1: app shell + UI foundation (build started)
 
 ### TD-044 — Next.js app shell scaffolded (Slice 1; UI-only)

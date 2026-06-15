@@ -1,0 +1,199 @@
+import { and, eq } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { Pool } from "pg";
+import * as schema from "../db/schema";
+import {
+  appChannels,
+  appConversations,
+  appCustomerIdentities,
+  appCustomers,
+} from "../db/schema";
+import type { AgnoSession } from "./types";
+import {
+  buildConversationValues,
+  resolveChannelForAgent,
+  type ChannelLike,
+} from "./mapping";
+
+/**
+ * Agno -> dashboard mapping sync (Slice 4). Reads `ai.agno_sessions` READ-ONLY and
+ * upserts ONLY dashboard-owned mapping rows (customers, identities, conversations).
+ * Idempotent: re-running creates no duplicates (composite unique constraints +
+ * find-or-create). Never writes/alters `ai.*`; never stores transcript messages.
+ */
+
+type Db = NodePgDatabase<typeof schema>;
+
+export interface SyncResult {
+  agentId: string;
+  considered: number;
+  mapped: number;
+  unmapped: number;
+  ambiguous: number;
+  customersCreated: number;
+  identitiesCreated: number;
+  conversationsCreated: number;
+  conversationsUpdated: number;
+}
+
+/** READ-ONLY: load Agno sessions for an agent. Only SELECT; never mutates `ai.*`. */
+export async function readSessionsByAgent(pool: Pool, agentId: string): Promise<AgnoSession[]> {
+  const res = await pool.query(
+    `select session_id, session_type, agent_id, runs, created_at, updated_at, metadata, summary
+       from ai.agno_sessions
+      where agent_id = $1`,
+    [agentId]
+  );
+  return res.rows.map((r) => ({
+    session_id: String(r.session_id),
+    session_type: r.session_type ?? null,
+    agent_id: r.agent_id ?? null,
+    runs: Array.isArray(r.runs) ? r.runs : r.runs ?? null,
+    created_at: r.created_at != null ? Number(r.created_at) : null,
+    updated_at: r.updated_at != null ? Number(r.updated_at) : null,
+    metadata: r.metadata ?? null,
+    summary: r.summary ?? null,
+  }));
+}
+
+async function activeChannels(db: Db): Promise<ChannelLike[]> {
+  const rows = await db.select().from(appChannels).where(eq(appChannels.isActive, true));
+  return rows.map((c) => ({
+    id: c.id,
+    tenantId: c.tenantId,
+    sourceAgentId: c.sourceAgentId,
+    isActive: c.isActive,
+  }));
+}
+
+/** Find-or-create the customer + identity for a contact. Returns the identity row. */
+async function findOrCreateIdentity(
+  db: Db,
+  tenantId: string,
+  channelId: string,
+  externalContactId: string,
+  counters: SyncResult
+) {
+  const where = and(
+    eq(appCustomerIdentities.tenantId, tenantId),
+    eq(appCustomerIdentities.channelId, channelId),
+    eq(appCustomerIdentities.externalContactId, externalContactId)
+  );
+
+  const [existing] = await db.select().from(appCustomerIdentities).where(where).limit(1);
+  if (existing) return existing;
+
+  const [customer] = await db.insert(appCustomers).values({ tenantId }).returning();
+  counters.customersCreated++;
+
+  await db
+    .insert(appCustomerIdentities)
+    .values({ tenantId, customerId: customer.id, channelId, externalContactId })
+    .onConflictDoNothing({
+      target: [
+        appCustomerIdentities.tenantId,
+        appCustomerIdentities.channelId,
+        appCustomerIdentities.externalContactId,
+      ],
+    });
+  counters.identitiesCreated++;
+
+  const [created] = await db.select().from(appCustomerIdentities).where(where).limit(1);
+  return created ?? null;
+}
+
+/** Sync all sessions for one agent into dashboard mapping rows. Idempotent. */
+export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Promise<SyncResult> {
+  const channels = await activeChannels(db);
+  const sessions = await readSessionsByAgent(pool, agentId);
+
+  const result: SyncResult = {
+    agentId,
+    considered: sessions.length,
+    mapped: 0,
+    unmapped: 0,
+    ambiguous: 0,
+    customersCreated: 0,
+    identitiesCreated: 0,
+    conversationsCreated: 0,
+    conversationsUpdated: 0,
+  };
+
+  for (const session of sessions) {
+    const resolution = resolveChannelForAgent(channels, session.agent_id);
+    if (resolution.status !== "mapped") {
+      if (resolution.status === "ambiguous") result.ambiguous++;
+      else result.unmapped++;
+      continue;
+    }
+    result.mapped++;
+
+    const { id: channelId, tenantId } = resolution.channel;
+    const externalContactId = session.session_id;
+
+    const identity = await findOrCreateIdentity(db, tenantId, channelId, externalContactId, result);
+    if (!identity) continue; // defensive; should not happen
+
+    const values = buildConversationValues(session, {
+      tenantId,
+      channelId,
+      customerId: identity.customerId,
+      customerIdentityId: identity.id,
+    });
+
+    const [existingConv] = await db
+      .select()
+      .from(appConversations)
+      .where(
+        and(
+          eq(appConversations.tenantId, tenantId),
+          eq(appConversations.channelId, channelId),
+          eq(appConversations.agnoSessionId, values.agnoSessionId)
+        )
+      )
+      .limit(1);
+
+    if (existingConv) {
+      await db
+        .update(appConversations)
+        .set({
+          lastAt: values.lastAt,
+          firstAt: existingConv.firstAt ?? values.firstAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(appConversations.id, existingConv.id));
+      result.conversationsUpdated++;
+    } else {
+      await db
+        .insert(appConversations)
+        .values({
+          tenantId,
+          customerId: identity.customerId,
+          customerIdentityId: identity.id,
+          channelId,
+          agnoSessionId: values.agnoSessionId,
+          externalContactId: values.externalContactId,
+          status: values.status,
+          firstAt: values.firstAt,
+          lastAt: values.lastAt,
+        })
+        .onConflictDoNothing({
+          target: [
+            appConversations.tenantId,
+            appConversations.channelId,
+            appConversations.agnoSessionId,
+          ],
+        });
+      result.conversationsCreated++;
+    }
+  }
+
+  return result;
+}
+
+/** Phase 1 demo agent. */
+export const CONCIERGE_AGENT_ID = "concierge";
+
+export function syncConcierge(db: Db, pool: Pool): Promise<SyncResult> {
+  return syncAgentSessions(db, pool, CONCIERGE_AGENT_ID);
+}

@@ -53,12 +53,12 @@ The `webapp-orchestrator` sequences every slice and enforces the gates.
 - `../templates/qa-report-template.md`
 - `../templates/migration-proposal-template.md`
 
-## Skills (parked)
+## Skills
 
-The global `.claude/skills/` directory contains scaffolded skill folders that are
-**empty**, and **no project skills are defined** for PEPPER ST. Skills are **optional**
-and **not required** for the agent team to run, so they do **not** block Gate 0. Revisit
-only if a stable skill convention is confirmed — do not add project skills now.
+Skills are **installed and active** in the global `.claude/skills/` directory (each with a
+`SKILL.md`). PEPPER ST. uses them **as-is** via the **root** governance — see `AGENTS.md`,
+`CLAUDE.md`, `docs/agents/skill-alignment.md`, and `.claude/skills/*/SKILL.md`. **Do not
+copy or redefine skills/governance in this project folder.**
 
 ## Golden rule
 
