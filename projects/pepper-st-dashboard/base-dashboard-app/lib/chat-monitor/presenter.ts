@@ -15,20 +15,13 @@ export interface ConversationRecord {
   lastAt: Date | string | null;
 }
 
-export interface SessionSummary {
-  messageCount: number;
-  turnCount: number;
-  lastActivityAt: Date | null;
-}
-
 export interface ConversationListItem {
   id: string;
   maskedContact: string; // never the raw phone/session id
   status: string;
   firstAt: string | null; // ISO
   lastAt: string | null; // ISO
-  messageCount: number;
-  turnCount: number;
+  turnCount: number; // cheap (jsonb_array_length(runs)); NOT a parsed message count
 }
 
 export interface ConversationListResult {
@@ -56,7 +49,7 @@ export function isWithinRetention(
 
 export function buildConversationList(
   records: ConversationRecord[],
-  summaries: Map<string, SessionSummary>,
+  turnCountById: Map<string, number>,
   opts: { retentionDays: number | null; now?: Date }
 ): ConversationListResult {
   const now = opts.now ?? new Date();
@@ -69,15 +62,14 @@ export function buildConversationList(
       restrictedCount++; // not surfaced as normal accessible history
       continue;
     }
-    const summary = summaries.get(r.id);
     items.push({
       id: r.id,
       maskedContact: maskContactId(r.externalContactId),
       status: r.status,
       firstAt: toDate(r.firstAt)?.toISOString() ?? null,
       lastAt: lastAt ? lastAt.toISOString() : null,
-      messageCount: summary?.messageCount ?? 0,
-      turnCount: summary?.turnCount ?? 0,
+      // Cheap turn count only; transcript bodies/counts are loaded lazily per conversation.
+      turnCount: turnCountById.get(r.id) ?? 0,
     });
   }
 
@@ -139,19 +131,26 @@ export function buildTranscriptView(
 }
 
 /**
- * Fully-serializable, fully-masked payload for the client component. Contains NO raw
- * contact/session id and NO DB handle — safe to pass from a Server Component to a
- * Client Component.
+ * Lazy list payload (GET /api/chat-monitor/conversations). Cheap to build: NO transcript
+ * messages, NO parsed message counts — only masked ids, status, timing, and a turn count.
  */
-export interface ChatMonitorConversation extends ConversationListItem {
-  transcript: TranscriptView;
-}
-
-export interface ChatMonitorData {
+export interface ConversationListPayload {
   tenantName: string;
   channelLabel: string;
   retentionDays: number | null;
   retentionLabel: string;
-  conversations: ChatMonitorConversation[];
+  conversations: ConversationListItem[];
   restrictedCount: number;
+}
+
+/**
+ * Lazy single-transcript payload (GET /api/chat-monitor/conversations/[id]/transcript).
+ * Parsed for ONE conversation only; fully masked; never persisted.
+ */
+export interface TranscriptPayload {
+  id: string;
+  maskedContact: string;
+  status: string;
+  lastAt: string | null; // ISO
+  transcript: TranscriptView;
 }

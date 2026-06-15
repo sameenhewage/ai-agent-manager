@@ -1,7 +1,9 @@
 # 03 — Feature Scope
 
 - **Project:** pepper-st-dashboard
-- **Status:** Phase 1 (docs-first)
+- **Status:** Phase 1 — Chat Monitor + Analytics + **Dashboard summary delivered** (Slices 5–6 +
+  7/7B/7C, 2026-06-15). Dashboard is a dense real-data console (KPIs + charts + recent conversations);
+  all three surfaces are demo-grade and real-data only.
 - **Last updated:** 2026-06-15
 
 The authoritative **in / parked / out** list for Phase 1. Mapped against the

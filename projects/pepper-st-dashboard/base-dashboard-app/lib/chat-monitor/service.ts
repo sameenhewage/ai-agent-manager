@@ -4,17 +4,15 @@ import type { Pool } from "pg";
 import * as schema from "../db/schema";
 import { appChannels, appConversations, appTenantEntitlements } from "../db/schema";
 import { resolveCurrentTenant } from "../tenant/context";
-import { readSessionsByAgent } from "../agno/sync";
 import { parseTranscript } from "../agno/parser";
-import type { ParsedTranscript } from "../agno/types";
+import { maskContactId } from "../agno/mask";
+import type { AgnoSession, ParsedTranscript } from "../agno/types";
 import {
   buildConversationList,
   buildTranscriptView,
   isWithinRetention,
-  type ChatMonitorConversation,
-  type ChatMonitorData,
-  type SessionSummary,
-  type TranscriptView,
+  type ConversationListPayload,
+  type TranscriptPayload,
 } from "./presenter";
 
 /**
@@ -35,7 +33,12 @@ const EMPTY_TRANSCRIPT: ParsedTranscript = {
   lastActivityAt: null,
 };
 
-export async function getChatMonitorData(db: Db, pool: Pool): Promise<ChatMonitorData> {
+const AGENT_FALLBACK = "concierge";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Resolve demo tenant + active WhatsApp channel + raw-history retention. Shared by both
+ *  lazy endpoints; throws on misconfiguration (surfaced as an error state in the UI). */
+async function resolveContext(db: Db) {
   const tenant = await resolveCurrentTenant(db);
   if (!tenant) throw new Error("Demo tenant not found.");
 
@@ -52,31 +55,36 @@ export async function getChatMonitorData(db: Db, pool: Pool): Promise<ChatMonito
     .where(eq(appTenantEntitlements.tenantId, tenant.id))
     .limit(1);
   const retentionDays = entitlement?.rawHistoryRetentionDays ?? null;
+  return { tenant, channel, retentionDays };
+}
+
+/**
+ * Conversation LIST (fast path): one indexed dashboard read + a cheap per-session
+ * `jsonb_array_length(runs)` aggregate. It NEVER transfers `runs` bodies or parses a
+ * transcript, so first paint does not wait on transcript work. Fully masked, serializable.
+ */
+export async function getConversationList(db: Db, pool: Pool): Promise<ConversationListPayload> {
+  const { tenant, channel, retentionDays } = await resolveContext(db);
 
   const conversations = await db
     .select()
     .from(appConversations)
     .where(and(eq(appConversations.tenantId, tenant.id), eq(appConversations.channelId, channel.id)));
 
-  // READ-ONLY Agno read; parse each transcript in memory (retention applied at read time).
-  const sessions = await readSessionsByAgent(pool, channel.sourceAgentId ?? "concierge");
-  const sessionById = new Map(sessions.map((s) => [s.session_id, s]));
-
-  const now = new Date();
-  const summaries = new Map<string, SessionSummary>();
-  const transcriptByConv = new Map<string, TranscriptView>();
-
-  for (const c of conversations) {
-    const session = sessionById.get(c.agnoSessionId);
-    const parsed = session ? parseTranscript(session, { retentionDays, now }) : EMPTY_TRANSCRIPT;
-    summaries.set(c.id, {
-      messageCount: parsed.messageCount,
-      turnCount: parsed.turnCount,
-      lastActivityAt: parsed.lastActivityAt,
-    });
-    const within = isWithinRetention(c.lastAt ?? null, retentionDays, now);
-    transcriptByConv.set(c.id, buildTranscriptView(parsed, { withinRetention: within }));
-  }
+  // Cheap turn counts: the DB computes jsonb_array_length(runs); only ints cross the wire.
+  const turnRows = await pool.query<{ session_id: string; turns: number | string | null }>(
+    `select session_id,
+            jsonb_array_length(
+              case when jsonb_typeof(runs::jsonb) = 'array' then runs::jsonb else '[]'::jsonb end
+            ) as turns
+       from ai.agno_sessions
+      where agent_id = $1`,
+    [channel.sourceAgentId ?? AGENT_FALLBACK]
+  );
+  const turnsBySession = new Map(turnRows.rows.map((r) => [String(r.session_id), Number(r.turns) || 0]));
+  const turnCountById = new Map(
+    conversations.map((c) => [c.id, turnsBySession.get(c.agnoSessionId) ?? 0])
+  );
 
   const { items, restrictedCount } = buildConversationList(
     conversations.map((c) => ({
@@ -86,27 +94,75 @@ export async function getChatMonitorData(db: Db, pool: Pool): Promise<ChatMonito
       firstAt: c.firstAt,
       lastAt: c.lastAt,
     })),
-    summaries,
-    { retentionDays, now }
+    turnCountById,
+    { retentionDays }
   );
-
-  const out: ChatMonitorConversation[] = items.map((it) => ({
-    ...it,
-    transcript: transcriptByConv.get(it.id) ?? {
-      state: "empty",
-      messages: [],
-      messageCount: 0,
-      turnCount: 0,
-      lastActivityAt: null,
-    },
-  }));
 
   return {
     tenantName: tenant.name,
     channelLabel: channel.displayName ?? channel.channelKey,
     retentionDays,
     retentionLabel: retentionDays == null ? "Unlimited" : `${retentionDays} days`,
-    conversations: out,
+    conversations: items,
     restrictedCount,
+  };
+}
+
+/**
+ * Single TRANSCRIPT (lazy path): loads ONLY the requested conversation (tenant + channel
+ * scoped to prevent IDOR), reads ONLY its Agno session (READ-ONLY), parses in memory with
+ * retention applied. Returns null when the id is malformed or not owned by this tenant.
+ */
+export async function getConversationTranscript(
+  db: Db,
+  pool: Pool,
+  conversationId: string
+): Promise<TranscriptPayload | null> {
+  if (!UUID_RE.test(conversationId)) return null;
+  const { tenant, channel, retentionDays } = await resolveContext(db);
+
+  const [conv] = await db
+    .select()
+    .from(appConversations)
+    .where(
+      and(
+        eq(appConversations.id, conversationId),
+        eq(appConversations.tenantId, tenant.id),
+        eq(appConversations.channelId, channel.id)
+      )
+    )
+    .limit(1);
+  if (!conv) return null;
+
+  const now = new Date();
+  const res = await pool.query(
+    `select session_id, runs, created_at, updated_at
+       from ai.agno_sessions
+      where session_id = $1 and agent_id = $2
+      limit 1`,
+    [conv.agnoSessionId, channel.sourceAgentId ?? AGENT_FALLBACK]
+  );
+  const row = res.rows[0] as
+    | { runs: unknown; created_at: number | string | null; updated_at: number | string | null }
+    | undefined;
+
+  let parsed: ParsedTranscript = EMPTY_TRANSCRIPT;
+  if (row) {
+    const session: AgnoSession = {
+      session_id: conv.agnoSessionId,
+      runs: (Array.isArray(row.runs) ? row.runs : null) as AgnoSession["runs"],
+      created_at: row.created_at != null ? Number(row.created_at) : null,
+      updated_at: row.updated_at != null ? Number(row.updated_at) : null,
+    };
+    parsed = parseTranscript(session, { retentionDays, now });
+  }
+
+  const within = isWithinRetention(conv.lastAt ?? null, retentionDays, now);
+  return {
+    id: conv.id,
+    maskedContact: maskContactId(conv.externalContactId),
+    status: conv.status,
+    lastAt: conv.lastAt ? conv.lastAt.toISOString() : null,
+    transcript: buildTranscriptView(parsed, { withinRetention: within }),
   };
 }

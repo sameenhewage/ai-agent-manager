@@ -10,6 +10,115 @@
 
 ---
 
+## 2026-06-15 — Slice 7C: Dashboard + Analytics visual/product parity (no new features)
+
+### TD-061 — Dashboard rebuilt as a dense, real-data operations console
+The Slice 7B Dashboard was a centered nav "link hub" with no metrics (and `○ Static`). Rebuilt it in
+the demo's grammar using the EXISTING real data: `/` is now `force-dynamic` and reads the same
+`getAnalyticsData` aggregate + the masked `getConversationList`, then server-renders a `.phead`
+(greeting + real-data badge + range segmented toolbar that only sets `?range=`), a dense 8-card KPI
+grid (conversations, new/returning, messages, turns+avg, tokens+coverage, cost+coverage, last
+activity), two real charts (conversations + tokens per day), a masked Recent-conversations panel, a
+Coverage/window panel, and ONE honest "Not tracked in Phase 1" panel. A thin **pure** presenter
+(`lib/dashboard/presenter.ts`) shapes the KPIs and exposes `FORBIDDEN_METRIC_KEYS`; a DB-free test
+(`presenter.test.ts`, 7 cases) fails CI if any fabricated metric (intent/sentiment/AI-resolution/
+priority/orders/exchanges/revenue/CSAT…) is ever emitted. No new data source, no migrations, no
+writes; PII stays masked. Added `app/(dashboard)/loading.tsx`. -> `app/(dashboard)/page.tsx`,
+`components/dashboard/{dashboard,dashboard-toolbar}.tsx`, `lib/dashboard/presenter.ts(+test)`.
+
+### TD-062 — Shared AreaChart + Analytics two-chart report row
+Extracted a dependency-free, hook-free `components/charts/area-chart.tsx` (the demo's gradient-area
+grammar) usable in BOTH server and client trees. Analytics swapped its single CSS bar chart for this
+component and gained a second real chart (**Tokens per day**, from `series.tokens`), giving the demo's
+two-chart report row; all existing analytics logic (ranges incl. Custom, retention clamp, timezone,
+KPIs) is unchanged. The Dashboard reuses the same component. Chat Monitor untouched — `/chat-monitor`
+stays `○ Static` and still fetches exactly one transcript lazily (verified). 106 tests green;
+typecheck + build green. -> `components/charts/area-chart.tsx`, `components/analytics/analytics.tsx`,
+`app/(dashboard)/analytics/loading.tsx`.
+
+---
+
+## 2026-06-15 — Slice 7B: UI workspace / layout correction (no new features)
+
+### TD-059 — App shell becomes a fixed viewport frame
+Root cause of the document-scroll bug: `app-shell.tsx` used `min-h-screen` + sticky chrome, so a long
+transcript grew the whole document and the user scrolled the entire page. Deepened the shell into the
+single module that owns the viewport frame: `flex h-dvh overflow-hidden`, stable sidebar/topbar, and
+exactly ONE scroll region (`<main className="min-h-0 flex-1 overflow-y-auto">`). The document
+(html/body) can no longer scroll (`htmlScrollable === 0`). -> `components/shell/app-shell.tsx`.
+
+### TD-060 — Page layout intents: workspace vs flowing (+ Dashboard/Analytics polish)
+Established two page shapes against the new frame. (a) WORKSPACE — Chat Monitor fills `h-full` and
+splits into a `grid-rows-[minmax(0,1fr)]` two-pane layout where each pane is
+`min-h-0 flex-1 overflow-y-auto`; removed the brittle `calc(100vh-210px)` / `max-h-[75vh]` magic
+numbers; the redundant read-only banner was folded into the header to maximise transcript room.
+(b) FLOWING — Dashboard + Analytics scroll inside `main`. Dashboard rebuilt as a compact,
+vertically-centered honest overview (entry + capability cards; no fake KPIs; removes the ~353px
+bottom void). Analytics gained a report toolbar, an `OVERVIEW · <range>` label, and a chart baseline
++ real peak/total captions (no new/fake data). The hybrid lazy Chat Monitor split is preserved
+(static shell + lazy `/api/chat-monitor/*` routes; only the selected transcript is fetched). 99
+tests + typecheck + build green; scroll behavior proven via runtime DOM assertions; `db:chat:verify`
+ALL PASS. -> `app/(dashboard)/chat-monitor/{page,loading}.tsx`,
+`components/chat-monitor/chat-monitor.tsx`, `app/(dashboard)/page.tsx`,
+`components/analytics/analytics.tsx`.
+
+---
+
+## 2026-06-15 — Slice 7: Demo hardening + Chat Monitor performance
+
+### TD-057 — Chat Monitor lazy split (instant shell + on-demand transcript)
+The Chat Monitor wait was caused by the old `getChatMonitorData` reading `runs` for ALL sessions and
+parsing EVERY transcript before first paint (~2–3s). Split into a deep two-path module:
+`getConversationList` (one indexed dashboard read + a cheap `jsonb_array_length(runs)` aggregate; NO
+transcript transfer/parsing; carries a turn count only) and `getConversationTranscript` (parses ONE
+tenant/channel-scoped session; IDOR-safe via uuid guard + tenant filter, returns null otherwise).
+Exposed as server route handlers `GET /api/chat-monitor/conversations` and `.../[id]/transcript`
+(server-only — import `pg` via the service; masked, `cache-control: no-store`). The page is now a
+**static shell**; the client lazily fetches list → selected transcript with skeleton / error / retry
+and per-id caching. Measured: shell `GET /chat-monitor` ~32ms (was ~2–3s); list ~377ms warm;
+single transcript ~459ms warm. Presenter list contract dropped message bodies/counts (turn count
+only; `ConversationListPayload` + `TranscriptPayload` replace the old combined `ChatMonitorData`).
+`ai.*` read-only; nothing persisted. -> `lib/chat-monitor/{presenter,service}.ts` (+ presenter test),
+`app/api/chat-monitor/**`, `components/chat-monitor/chat-monitor.tsx`,
+`app/(dashboard)/chat-monitor/{page,loading}.tsx`, `scripts/chat-monitor-verify.ts`.
+
+### TD-058 — Demo hardening: honest Dashboard hub + loading skeletons
+Replaced the stale placeholder Dashboard ("Shell preview / connects in later slices / after Slice 6")
+with an honest, instant overview that routes to the two live surfaces — **no fabricated metrics, no
+slow query**. Added route-level `loading.tsx` skeletons for Chat Monitor + Analytics. Audited: no
+Bloomwire/dummy leaks in app/components, masking intact, no fake KPIs/statuses, no console errors
+(unrelated favicon 404 aside). Stale status lines refreshed (CONTEXT.md, phase-1, implementation
+plan). -> `app/(dashboard)/page.tsx`, `app/(dashboard)/{chat-monitor,analytics}/loading.tsx`,
+`CONTEXT.md`, `docs/phases/*`.
+
+---
+
+## 2026-06-15 — Slice 6: Basic Analytics (live, real metrics, tz-aware, retention-capped)
+
+### TD-055 — Pure analytics ranges + aggregation (Slice 6)
+`lib/analytics/ranges.ts`: timezone-aware `[from,to)` for Today/3D/7D/14D/30D/This-month/Custom in
+the tenant `timezone` (default Asia/Colombo), dependency-free `parseRangeParams` (**Zod not
+installed** → pure validation), and a pure `clampToRetention` (ADR-0006; **NULL = unlimited**).
+`lib/analytics/aggregate.ts`: pure aggregation of REAL metrics only (ADR-0007) — conversation
+volume, new/returning split, turns, displayed messages, token/cost sums with honest **coverage**
+counts, activity bounds, and a continuous per-local-day series. TDD: 23 analytics tests (99 total).
+-> `lib/analytics/{ranges,aggregate}.ts` (+ tests).
+
+### TD-056 — Server analytics service + server-first UI (Slice 6)
+`lib/analytics/service.ts` resolves PEPPER ST. + `whatsapp-main` + `analytics_retention_days`;
+universe = the MAPPED `app_conversations` joined by value to `ai.agno_sessions` (**READ-ONLY**: runs
++ `session_data.session_metrics.total_tokens`/`cost`), parses runs in memory for turn/message counts,
+clamps the range, and returns an **aggregate, serializable, PII-free** payload (no per-contact ids).
+`app/(dashboard)/analytics/page.tsx` is `force-dynamic` + reads `searchParams`; client
+`components/analytics/analytics.tsx` holds only range-selection state and pushes it to the URL (the
+Server Component recomputes), rendering KPI cards + a **dependency-free** daily bar chart (no
+recharts). Verified in-browser (7D/30D switch) + read-only `db:analytics:verify` (live totals ==
+independent SQL: 13 convs, 62 turns, 688,192 tokens, $0.053188). `ai.*` untouched; no fabricated
+KPIs. -> `lib/analytics/service.ts`, `app/(dashboard)/analytics/page.tsx`,
+`components/analytics/analytics.tsx`, `scripts/analytics-verify.ts`, `package.json`.
+
+---
+
 ## 2026-06-15 — Slice 5: Chat Monitor (live, read-only, masked)
 
 ### TD-053 — Chat Monitor presenter + server data service (Slice 5)

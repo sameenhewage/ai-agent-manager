@@ -1,7 +1,7 @@
 # Phase 1 — Scope, Plan, Gates
 
 - **Project:** pepper-st-dashboard
-- **Status:** Slices 0–5 complete — **Chat Monitor live on real data**; Analytics (Slice 6) next
+- **Status:** Slices 0–7C complete — **Phase 1 feature-complete + demo-grade**; dense real-data Dashboard, Chat Monitor lazy-loaded (instant `○ Static` shell, full-height workspace), Analytics report (two real charts) — all real-data only, no document scroll. **Gate 8 (Phase 1 acceptance) ✅ PASS — accepted 2026-06-15** (typecheck + 106 tests + build green; prod-mode browser acceptance; `db:chat:verify` + `db:analytics:verify` ALL PASS; boundaries clean).
 - **Last updated:** 2026-06-15
 
 ## Objective
@@ -42,8 +42,9 @@ chat, rich AI metadata. See `roadmap.md`.
    Tailwind + shadcn/ui; demo tokens; sidebar/topbar/dashboard shell; 3 nav surfaces.
    No DB logic. See `docs/handoff/2026-06-15-slice-1-app-shell.md`.
 3. **Drizzle schema / migration proposal** — ✅ **Implemented (2026-06-15)**: Drizzle
-   schema matching `02-schema-proposal.sql.md`; migration `0000` **generated, not applied**
-   (Gate 2 pending). Entitlements **explicit** (no hidden defaults). See
+   schema matching `02-schema-proposal.sql.md`; migration `0000` **generated** here (not applied in
+   this step; **Gate 2 was subsequently approved and the migration applied during step 4 / Seed** —
+   see the Gates table below). Entitlements **explicit** (no hidden defaults). See
    `docs/handoff/2026-06-15-slice-2-drizzle-schema.md`.
 4. **Seed + tenant context** — ✅ **Implemented (2026-06-15)**: migration applied
    (post-Gate 2); seeded PEPPER ST. + WhatsApp/`concierge` + **explicit enterprise/unlimited
@@ -53,10 +54,32 @@ chat, rich AI metadata. See `roadmap.md`.
    transcript (masked PII, retention windowing, empty/restricted/error states); server-first;
    `ai.*` read-only; no transcript persisted. Verified in-browser + `db:chat:verify`. See
    `docs/handoff/2026-06-15-slice-5-chat-monitor.md`.
-6. **Basic analytics** — timezone-aware ranges; real metrics only;
-   `analytics_retention_days` applied. TDD.
-7. **Demo hardening** — PEPPER ST. branding; remove Bloomwire leaks; loading/empty/
-   error states; PII audit; handoff.
+6. **Basic analytics** — ✅ **Implemented (2026-06-15)**: tenant-timezone ranges
+   (Today/3D/7D/14D/30D/Month/Custom); real metrics only (volume, new/returning, turns, messages,
+   tokens, cost with coverage, activity bounds) + daily series; `analytics_retention_days` clamp
+   (NULL = unlimited); server-first; `ai.*` read-only; no fabricated KPIs. Verified in-browser +
+   `db:analytics:verify`. See `docs/handoff/2026-06-15-slice-6-analytics.md`.
+7. **Demo hardening** — ✅ **Implemented (2026-06-15)**: Chat Monitor **performance** refactor
+   (instant static shell + lazy list/transcript API routes — shell ~32ms vs ~2–3s); skeleton/
+   error/retry states across Dashboard/Chat Monitor/Analytics; honest Dashboard hub (no stale
+   "later slices" copy, no fake KPIs); no Bloomwire leaks; masking intact. Verified in-browser +
+   `db:chat:verify`. See `docs/handoff/2026-06-15-slice-7-demo-hardening.md`.
+8. **UI workspace correction (Slice 7B)** — ✅ **Implemented (2026-06-15)**: fixed the document-scroll
+   bug — the app shell is now a fixed `h-dvh` viewport frame; Chat Monitor is a full-height two-pane
+   workspace (list + transcript each scroll internally; the document never scrolls); Dashboard is a
+   compact, centered, honest overview (no fake KPIs); Analytics is a real-data report. **UI/layout
+   only** — no data, schema, or feature changes; the hybrid lazy Chat Monitor split is preserved.
+   Verified in-browser (runtime DOM scroll assertions) + `db:chat:verify`. See
+   `docs/handoff/2026-06-15-slice-7b-ui-workspace.md`.
+9. **Dashboard + Analytics parity (Slice 7C)** — ✅ **Implemented (2026-06-15)**: rebuilt the
+   Dashboard from a centered link-hub into a dense, real-data operations console (`force-dynamic`):
+   `.phead` + range toolbar, 8 real KPI cards, two real charts (conversations + tokens/day), masked
+   recent conversations, coverage panel, and one honest "Not tracked" panel — reusing the existing
+   `getAnalyticsData` + `getConversationList` services (no new data source). Analytics gained the
+   shared area chart + a real tokens/day chart. **Visual/product correction only** — no migrations,
+   no DB writes, `ai.agno_*` untouched, no fabricated metrics (guarded by a unit test); Chat Monitor
+   stays `○ Static` and un-regressed. 106 tests + typecheck + build green; browser-verified. See
+   `docs/handoff/2026-06-15-slice-7c-dashboard-parity.md`.
 
 ## Gates
 
@@ -67,6 +90,7 @@ chat, rich AI metadata. See `roadmap.md`.
 | 2 | Approve `dashboard` schema migration (Drizzle schema + migrations matching the SQL proposal) | ✅ approved + applied (Slice 3, 2026-06-15) |
 | 3 | Tech stack (`docs/architecture/05-tech-stack.md`) | ✅ locked |
 | 4 | Per-slice QA + docs/handoff update | per slice |
+| 8 | **Phase 1 acceptance review** — product / UI / data / security-PII / performance / docs across Dashboard, Chat Monitor, Analytics (no blockers) | ✅ PASS (2026-06-15) |
 
 ## Acceptance (phase-level)
 

@@ -1,8 +1,10 @@
 # Workflow 05 — Analytics Filter
 
-- **Status:** Phase 1 (docs-first)
+- **Status:** ✅ Implemented (Slice 6, 2026-06-15) — see
+  `docs/handoff/2026-06-15-slice-6-analytics.md`. Note: "Last month" range deferred;
+  ranges shipped = Today/3D/7D/14D/30D/This-month/Custom.
 - **Last updated:** 2026-06-15
-- **Related:** ADR-0007, `docs/architecture/03-agno-mapping.md`
+- **Related:** ADR-0007, ADR-0006, `docs/architecture/03-agno-mapping.md`
 
 ## Goal
 

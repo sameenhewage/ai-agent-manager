@@ -14,9 +14,11 @@ const rec = (
   firstAt: Date | null = null
 ) => ({ id, externalContactId: contact, status, lastAt, firstAt });
 
-const summaries = new Map([
-  ["c1", { messageCount: 4, turnCount: 2, lastActivityAt: null }],
-  ["c2", { messageCount: 2, turnCount: 1, lastActivityAt: null }],
+// Lazy list contract: only a cheap turn count (jsonb_array_length(runs)) is carried;
+// the list NEVER parses transcripts or includes message bodies/counts.
+const turnCounts = new Map<string, number>([
+  ["c1", 2],
+  ["c2", 1],
 ]);
 
 describe("isWithinRetention", () => {
@@ -36,7 +38,7 @@ describe("buildConversationList", () => {
       rec("c1", "94714128890", new Date("2026-06-10T00:00:00Z")),
       rec("c2", "94771234567", new Date("2026-06-14T00:00:00Z")),
     ];
-    const { items } = buildConversationList(records, summaries, { retentionDays: null });
+    const { items } = buildConversationList(records, turnCounts, { retentionDays: null });
     expect(items.map((i) => i.id)).toEqual(["c2", "c1"]);
     expect(items[0].maskedContact).toBe("94•••••567");
     expect(items.some((i) => i.maskedContact.includes("714128"))).toBe(false);
@@ -44,12 +46,12 @@ describe("buildConversationList", () => {
 
   it("never exposes the full external_contact_id in the serialized view", () => {
     const records = [rec("c1", "94714128890", new Date())];
-    const { items } = buildConversationList(records, summaries, { retentionDays: null });
+    const { items } = buildConversationList(records, turnCounts, { retentionDays: null });
     expect(JSON.stringify(items)).not.toContain("94714128890");
   });
 
   it("handles an empty list", () => {
-    expect(buildConversationList([], summaries, { retentionDays: null })).toEqual({
+    expect(buildConversationList([], turnCounts, { retentionDays: null })).toEqual({
       items: [],
       restrictedCount: 0,
     });
@@ -61,7 +63,7 @@ describe("buildConversationList", () => {
       rec("c1", "94714128890", new Date("2026-01-01T00:00:00Z")),
       rec("c2", "94771234567", new Date("2026-06-14T00:00:00Z")),
     ];
-    const { items, restrictedCount } = buildConversationList(records, summaries, {
+    const { items, restrictedCount } = buildConversationList(records, turnCounts, {
       retentionDays: 30,
       now,
     });
@@ -69,11 +71,13 @@ describe("buildConversationList", () => {
     expect(restrictedCount).toBe(1);
   });
 
-  it("carries message/turn counts where derivable", () => {
+  it("carries a cheap turn count but NO transcript messages or message count (lazy list)", () => {
     const records = [rec("c1", "94714128890", new Date())];
-    const { items } = buildConversationList(records, summaries, { retentionDays: null });
-    expect(items[0].messageCount).toBe(4);
+    const { items } = buildConversationList(records, turnCounts, { retentionDays: null });
     expect(items[0].turnCount).toBe(2);
+    expect(items[0]).not.toHaveProperty("messageCount");
+    expect(items[0]).not.toHaveProperty("messages");
+    expect(items[0]).not.toHaveProperty("transcript");
   });
 });
 

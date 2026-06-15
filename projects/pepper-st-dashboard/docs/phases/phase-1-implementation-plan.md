@@ -1,9 +1,11 @@
 # Phase 1 — Implementation Plan (Build Slices)
 
 - **Project:** pepper-st-dashboard
-- **Status:** **In build** — Slices 0–5 implemented (app shell → Drizzle schema → migration
-  applied + seed → Agno parser/mapping → **Chat Monitor live on real data**). Gates 0–4
-  satisfied; Slice 6 (Analytics) next. This document defines *how* Phase 1 gets built.
+- **Status:** **Phase 1 build complete + Gate 8 accepted (2026-06-15)** — Slices 0–7 implemented
+  (app shell → Drizzle schema → migration applied + seed → Agno parser/mapping → Chat Monitor →
+  Analytics → **Chat Monitor lazy-loaded + demo hardening**), plus **7B** (workspace layout) and
+  **7C** (dashboard/analytics parity) quality corrections. Gates 0–4 satisfied. This document defines
+  *how* Phase 1 was built.
 - **Last updated:** 2026-06-15
 - **Related:** `docs/phases/phase-1.md`, `docs/product/04-prd-first-slice.md`,
   `docs/architecture/02-schema-proposal.sql.md`, `docs/architecture/05-tech-stack.md`,
@@ -131,8 +133,9 @@ shadcn/ui (restyled, not default theme) · Drizzle ORM (+ `drizzle-kit` migratio
 ## Slice 2 — Drizzle schema / migration proposal
 
 - **Status:** ✅ **Implemented (2026-06-15)** — Drizzle schema + generated migration
-  `0000` in `base-dashboard-app/` (**PROPOSED, not applied**; no DB connection). Typecheck
-  + **39 tests** + build green (Node 20). **Gate 2 pending** — see
+  `0000` in `base-dashboard-app/` (**PROPOSED, not applied** in this slice; no DB connection). Typecheck
+  + **39 tests** + build green (Node 20). **Gate 2 was subsequently approved and the migration applied
+  in Slice 3** (see the pre-build gates table above) — see
   `docs/architecture/migration-proposal-0000.md` and
   `docs/handoff/2026-06-15-slice-2-drizzle-schema.md`.
 - **Goal:** Author the **Drizzle schema** that matches the approved SQL design and a
@@ -272,6 +275,16 @@ shadcn/ui (restyled, not default theme) · Drizzle ORM (+ `drizzle-kit` migratio
 
 ## Slice 6 — Basic analytics
 
+- **Status:** ✅ **Implemented (2026-06-15)** — pure `lib/analytics/ranges.ts` (tz-aware
+  `[from,to)` for Today/3D/7D/14D/30D/This-month/Custom; dependency-free `parseRangeParams`
+  — Zod not installed; pure `clampToRetention`) + `lib/analytics/aggregate.ts` (real metrics only:
+  volume, new/returning, turns, displayed messages, token/cost with coverage, activity bounds,
+  daily series). Server `lib/analytics/service.ts` (mapped conversations ⊕ `ai.agno_sessions`
+  read-only incl. `session_data.session_metrics`; retention clamp) → `force-dynamic` page +
+  client `components/analytics/analytics.tsx` (URL-driven range switch; KPI cards; dependency-free
+  bar chart — no recharts). TDD: 23 analytics tests (99 total). Verified in-browser (7D/30D) +
+  read-only `db:analytics:verify` (live == SQL). `ai.*` untouched; no fabricated KPIs. See
+  `docs/handoff/2026-06-15-slice-6-analytics.md`.
 - **Goal:** Real, date-filtered analytics in the tenant timezone — **no fake KPIs**.
 - **Owner / subagent:** Fullstack Builder + QA Review.
 - **Files likely touched:** `app/(dashboard)/analytics/page.tsx`,
@@ -298,6 +311,15 @@ shadcn/ui (restyled, not default theme) · Drizzle ORM (+ `drizzle-kit` migratio
 
 ## Slice 7 — Demo hardening
 
+- **Status:** ✅ **Implemented (2026-06-15)** — Priority 1 was Chat Monitor **performance**: the
+  old all-in-one server fetch parsed every transcript before first paint (~2–3s). Split into a
+  cheap `getConversationList` (dashboard read + `jsonb_array_length(runs)`, no parsing) and a lazy
+  `getConversationTranscript` (one IDOR-safe session), exposed as `GET /api/chat-monitor/conversations`
+  and `.../[id]/transcript`; the page is now a STATIC shell + client that lazily fetches with
+  skeleton/error/retry. Shell ~32ms (was ~2–3s); list ~377ms / transcript ~459ms warm. Plus honest
+  Dashboard hub (no stale copy, no fake KPIs), `loading.tsx` skeletons, masking/no-leak audit. 99
+  tests; typecheck + build green; `db:chat:verify` (split + IDOR) ALL PASS. See
+  `docs/handoff/2026-06-15-slice-7-demo-hardening.md`.
 - **Goal:** Make the build demo-safe and on-brand for PEPPER ST.
 - **Owner / subagent:** Fullstack Builder + QA Review + Handoff Agent.
 - **Files likely touched:** `app/globals.css` / theme (PEPPER ST. branding),

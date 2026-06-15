@@ -23,7 +23,8 @@
     "db:agno:inspect": "tsx scripts/agno-inspect.ts",
     "db:agno:sync": "tsx scripts/agno-sync.ts",
     "db:agno:verify": "tsx scripts/agno-verify.ts",
-    "db:chat:verify": "tsx scripts/chat-monitor-verify.ts"
+    "db:chat:verify": "tsx scripts/chat-monitor-verify.ts",
+    "db:analytics:verify": "tsx scripts/analytics-verify.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.1.1",
