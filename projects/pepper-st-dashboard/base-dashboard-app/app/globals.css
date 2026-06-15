@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   PEPPER ST. — AI Chat Operations Dashboard
+   Design tokens mapped 1:1 from the approved demo prototype.
+   Brand accent = rose/berry (business + staff).
+   AI accent = violet (everything the bot does).
+   ============================================================ */
+:root {
+  --accent: #be185d;
+  --on-accent: #fff;
+  --accent-weak: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 36%, transparent);
+  --ai: #7c3aed;
+  --on-ai: #fff;
+  --ai-weak: color-mix(in srgb, var(--ai) 13%, transparent);
+  --ai-line: color-mix(in srgb, var(--ai) 36%, transparent);
+  --wa: #25d366;
+  --wa-weak: color-mix(in srgb, #25d366 14%, transparent);
+  --wa-deep: #128c7e;
+  --bg: #f4f5f8;
+  --panel: #fff;
+  --panel2: #fafbfc;
+  --hover: #f1f3f7;
+  --text: #0f1729;
+  --muted: #64748b;
+  --faint: #94a3b8;
+  --line: #e6e9ef;
+  --line2: #eef1f5;
+  --good: #0e9f6e;
+  --good-weak: color-mix(in srgb, #0e9f6e 14%, transparent);
+  --warn: #d97706;
+  --warn-weak: color-mix(in srgb, #d97706 16%, transparent);
+  --bad: #e02424;
+  --bad-weak: color-mix(in srgb, #e02424 12%, transparent);
+  --info: #2563eb;
+  --info-weak: color-mix(in srgb, #2563eb 12%, transparent);
+  --teal: #0d9488;
+  --teal-weak: color-mix(in srgb, #0d9488 14%, transparent);
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 12px 30px rgba(16, 24, 40, 0.07);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-pop: 0 10px 40px rgba(16, 24, 40, 0.16);
+  --r: 14px;
+  --rs: 10px;
+  --ui: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+[data-theme="dark"] {
+  --bg: #0c0f16;
+  --panel: #141923;
+  --panel2: #19202b;
+  --hover: #1d2531;
+  --text: #e8ebf1;
+  --muted: #9aa4b4;
+  --faint: #677082;
+  --line: #242c39;
+  --line2: #1f2733;
+  --accent: #ec4899;
+  --accent-weak: color-mix(in srgb, #ec4899 16%, transparent);
+  --accent-line: color-mix(in srgb, #ec4899 40%, transparent);
+  --ai: #a78bfa;
+  --ai-weak: color-mix(in srgb, #a78bfa 16%, transparent);
+  --ai-line: color-mix(in srgb, #a78bfa 40%, transparent);
+  --good: #34d399;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --info: #60a5fa;
+  --teal: #2dd4bf;
+  --wa-deep: #34d399;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 16px 50px rgba(0, 0, 0, 0.55);
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: var(--accent);
+    color: #fff;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 9px;
+    border: 3px solid var(--panel);
+  }
+}
+
+@layer utilities {
+  .font-mono {
+    font-family: var(--mono);
+  }
+}
