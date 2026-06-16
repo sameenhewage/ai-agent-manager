@@ -43,6 +43,17 @@
   - **Before the fix, same harness/layout:** **−69px** (FAIL) — proving the test now reproduces the real bug.
 - Page size unchanged (**20**). No API/DB/schema change; no `ai.*`/`dashboard.*` writes; no PII added.
 
+### TD-086 — Prefetch older messages a viewport-and-a-half BEFORE the top (don't wait until scrollTop 0), gated to upward scrolls
+**Trigger (user):** "don't wait until the scroll reaches the top to load — load as you approach it, so even a fast scroll-up never waits." The TD-085 anchor fix was accepted; this is a UX follow-up so the spinner is rarely (ideally never) seen.
+- **Change:** the older-page trigger threshold moved from a fixed **72px** to a **viewport-relative prefetch margin** `olderPrefetchThreshold(viewportHeight) = max(72, round(viewportHeight × 1.5))` (≈ **942px** at a 628px panel). New pure helpers `olderPrefetchThreshold` + `OLDER_PREFETCH_VIEWPORT_FACTOR`, and `decideOlderScrollAction` gained a **`scrollingUp` gate**: a new fetch starts only while moving **toward** the top. The gate stops the initial scroll-to-bottom and the post-prepend correction's downward `scrollTop` jump from ever triggering a load (so opening a chat still does exactly **one** transcript request — TD-082 preserved). `handleScroll` tracks `lastScrollTopRef` to derive direction. Anchor capture, the two-pass correction, `overflow-anchor:none`, fixed-height loader, and the `inFlightOlderRef` de-dupe are all unchanged.
+- **Why 1.5× viewport:** generous enough that a normal scroll-up has the next page already loading (often fully landed) before reaching the top, while still > content height only for very short threads (where eager prefetch is harmless). Viewport-relative so it adapts across screen sizes.
+- **Tests:** `scroll-anchor.test.ts` now **18** (+6): prefetch fires early when `scrollingUp`; the direction gate blocks downward scrolls (but in-flight capture still runs); `olderPrefetchThreshold` margin + tiny-viewport floor; `scrollingUp` defaults true. Full suite **235/235**, `typecheck` clean.
+- **Browser proof — DESKTOP (1920×972, panel 628 → threshold 942), Slow 3G throttle (the user's "fast scroll on slow network"):**
+  - **Open:** `openedWithoutLoad: true` — the scroll-to-bottom does **not** fetch an older page (direction gate). 
+  - **Normal scroll-up:** the load fires at **scrollTop 903** (≈ 903px from the top, not 72), **invisibly** (loader off-screen at the top, `spinnerVisibleWhilePending:false`); the prepend lands **2.1s** later and the anchor (`"any croco"`) holds at **topDelta 0px**.
+  - **Fast flick to the very top, OUTRUNNING the prefetch:** reaches `scrollTop 0` with the load still pending (2.0s latency); when it lands the anchor (`"Haha…"`) holds at **topDelta −1px**, maxDeviation 1px.
+  - Proven on dev `:3411` AND prod `:3412`. No console errors. Page size **20**; no API/DB/schema change; no `ai.*`/`dashboard.*` writes; no PII.
+
 ## 2026-06-16 — Slice V2-REALTIME-GATE: Docs alignment + Slice 12F redefinition (Mandatory Realtime Monitoring + Automatic Agno Sync) — DOCS ONLY (no code, no DB, no migration, no `ai.*`/`dashboard.*` writes, no commit/push)
 
 ### TD-081 — Redefined Slice 12F from "polling; SSE optional" to **mandatory realtime monitoring + automatic Agno sync**; aligned the roadmap/status docs to the implemented state

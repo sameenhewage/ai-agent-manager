@@ -30,7 +30,7 @@ import type {
   ConversationMessagesState,
 } from "@/lib/chat-monitor/message-pagination";
 import { createChatInitialLoad, resolveInitialSelection } from "./initial-load";
-import { reanchorScrollTop } from "./scroll-anchor";
+import { reanchorScrollTop, decideOlderScrollAction, olderPrefetchThreshold } from "./scroll-anchor";
 
 /**
  * Chat Monitor (Slice 7) — CLIENT component. The page shell paints instantly; this
@@ -499,6 +499,9 @@ function ConversationDetail({
   // Anchor captured the instant an older-page load is triggered: the message nearest the top of
   // the viewport + its distance from the viewport top. Restored ONLY once the prepend lands.
   const anchorRef = React.useRef<{ id: string; offset: number } | null>(null);
+  // Previous scrollTop, to detect scroll DIRECTION (we only prefetch the older page while moving
+  // toward the top — never on the initial scroll-to-bottom or the post-prepend correction jump).
+  const lastScrollTopRef = React.useRef(0);
 
   const ready = chat && chat.status === "ready" ? chat : null;
   const messages = ready ? ready.messages : [];
@@ -546,18 +549,24 @@ function ConversationDetail({
 
   function handleScroll() {
     const el = scrollRef.current;
-    if (!el || !ready || !ready.hasMoreBefore) return;
-    // Keep the anchor pinned to the user's CURRENT top message — continuously WHILE an older page
-    // is in flight and they keep scrolling toward the top. The earlier code captured the anchor
-    // only at fetch-START (scrollTop ≈ 72); during the async fetch the user scrolls on (often all
-    // the way to scrollTop 0), so by the time the prepend landed that anchor was stale and the
-    // correction snapped the view back up by ≈ the trigger threshold (the ~70px jump in the
-    // video). Re-capturing on every scroll restores where the user ACTUALLY is when it commits.
-    if (ready.loadingOlder) {
-      anchorRef.current = captureTopAnchor(el);
-      return;
-    }
-    if (el.scrollTop <= 72) beginLoadOlder();
+    if (!el || !ready) return;
+    const scrollTop = el.scrollTop;
+    const scrollingUp = scrollTop < lastScrollTopRef.current;
+    lastScrollTopRef.current = scrollTop;
+    // The anchor must stay pinned to the user's CURRENT top message — continuously WHILE an older
+    // page is in flight and they keep scrolling toward the top. Capturing only at fetch-START let
+    // the anchor go stale during the async fetch (TD-085, the ~70px jump). We also PREFETCH the
+    // next page a generous, viewport-relative distance BEFORE the top (TD-086) so a fast scroll-up
+    // never waits at the top — only while moving up. `decideOlderScrollAction` is unit-tested.
+    const action = decideOlderScrollAction({
+      hasMoreBefore: ready.hasMoreBefore,
+      loadingOlder: ready.loadingOlder,
+      scrollTop,
+      scrollingUp,
+      threshold: olderPrefetchThreshold(el.clientHeight),
+    });
+    if (action.capture) anchorRef.current = captureTopAnchor(el);
+    if (action.trigger) onLoadOlder();
   }
 
   return (

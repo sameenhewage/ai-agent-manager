@@ -61,6 +61,12 @@ stay stable as new messages append at the end.
   `MAX_PAGE_SIZE = 100`), auto-scrolled to the bottom; scroll-up (or a "Load older messages"
   button) fetches the previous page of 20 via the cursor, **prepends** it, and **holds the
   reading position** — no jump to the older top, no jump to the bottom.
+- **Prefetch (TD-086):** the previous page is fetched **before** the user reaches the top — when
+  the viewport is within `olderPrefetchThreshold = max(72, round(viewportHeight × 1.5))` (≈ one and
+  a half screens) of the top, **and only while scrolling up**. So a normal scroll-up usually has
+  the next page already loaded (no spinner), and a fast scroll-up never sits waiting at the top.
+  The upward-only gate keeps opening a chat to **one** transcript request (the scroll-to-bottom and
+  the post-prepend correction never trigger a load).
 - **Scroll-anchor preservation (TD-083/084/085):** the message nearest the viewport top is
   captured (`data-mid` + its offset) and **kept fresh on every scroll event — including while an
   older page is still loading** — so the anchor always reflects where the user *currently* is.

@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { anchorCorrectionDelta, reanchorScrollTop } from "./scroll-anchor";
+import {
+  anchorCorrectionDelta,
+  reanchorScrollTop,
+  decideOlderScrollAction,
+  olderPrefetchThreshold,
+  OLDER_LOAD_THRESHOLD_PX,
+  OLDER_PREFETCH_VIEWPORT_FACTOR,
+} from "./scroll-anchor";
 
 /**
  * Scroll-anchor preservation (WhatsApp-like). When older messages are prepended, the captured
@@ -51,5 +58,104 @@ describe("anchorCorrectionDelta", () => {
     // reanchorScrollTop(scrollTop, currentOffset=after, desiredOffset=before) === scrollTop + delta
     expect(reanchorScrollTop(scrollTop, after, before)).toBe(scrollTop + delta);
     expect(reanchorScrollTop(scrollTop, after, before)).toBe(472);
+  });
+});
+
+/**
+ * `decideOlderScrollAction` — the contract that fixed TD-085's ~70px jump. The anchor must be
+ * re-captured CONTINUOUSLY while an older page is in flight, so it tracks where the user actually
+ * is when the prepend lands (they keep scrolling during the async fetch), not where they were when
+ * the fetch began.
+ */
+describe("decideOlderScrollAction", () => {
+  it("at/near the top (idle): captures the anchor AND triggers the fetch", () => {
+    expect(decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: false, scrollTop: 0 })).toEqual({
+      capture: true,
+      trigger: true,
+    });
+    expect(
+      decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: false, scrollTop: OLDER_LOAD_THRESHOLD_PX })
+    ).toEqual({ capture: true, trigger: true });
+  });
+
+  it("REGRESSION (TD-085): while a page is in flight, keeps re-capturing the anchor but does NOT re-fetch", () => {
+    // This is the whole fix: during the async fetch the user scrolls on toward the top, so the
+    // anchor must keep updating. The old code early-returned here and the anchor went stale → jump.
+    expect(decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: true, scrollTop: 0 })).toEqual({
+      capture: true,
+      trigger: false,
+    });
+    expect(decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: true, scrollTop: 300 })).toEqual({
+      capture: true,
+      trigger: false,
+    });
+  });
+
+  it("mid-scroll (idle, above the threshold): does nothing — the anchor is only armed around a load", () => {
+    expect(decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: false, scrollTop: 600 })).toEqual({
+      capture: false,
+      trigger: false,
+    });
+  });
+
+  it("no older page available: never captures or triggers, regardless of position", () => {
+    expect(decideOlderScrollAction({ hasMoreBefore: false, loadingOlder: false, scrollTop: 0 })).toEqual({
+      capture: false,
+      trigger: false,
+    });
+    expect(decideOlderScrollAction({ hasMoreBefore: false, loadingOlder: true, scrollTop: 0 })).toEqual({
+      capture: false,
+      trigger: false,
+    });
+  });
+
+  it("respects a custom threshold", () => {
+    expect(
+      decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: false, scrollTop: 120, threshold: 150 })
+    ).toEqual({ capture: true, trigger: true });
+    expect(
+      decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: false, scrollTop: 200, threshold: 150 })
+    ).toEqual({ capture: false, trigger: false });
+  });
+
+  it("PREFETCH (TD-086): triggers EARLY — within the threshold but far from the very top — when scrolling up", () => {
+    // 900px from the top, threshold 942 (≈ a desktop viewport prefetch), moving up → load now,
+    // long before scrollTop hits 0, so a fast scroll-up never waits at the top.
+    expect(
+      decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: false, scrollTop: 900, threshold: 942, scrollingUp: true })
+    ).toEqual({ capture: true, trigger: true });
+  });
+
+  it("DIRECTION GATE (TD-086): does NOT trigger when scrolling DOWN (e.g. the initial scroll-to-bottom / post-prepend correction)", () => {
+    expect(
+      decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: false, scrollTop: 0, threshold: 942, scrollingUp: false })
+    ).toEqual({ capture: false, trigger: false });
+    // But a fetch already in flight still keeps the anchor fresh regardless of direction.
+    expect(
+      decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: true, scrollTop: 0, threshold: 942, scrollingUp: false })
+    ).toEqual({ capture: true, trigger: false });
+  });
+
+  it("defaults scrollingUp to true (position-only callers keep the eager behavior)", () => {
+    expect(decideOlderScrollAction({ hasMoreBefore: true, loadingOlder: false, scrollTop: 10 })).toEqual({
+      capture: true,
+      trigger: true,
+    });
+  });
+});
+
+describe("olderPrefetchThreshold", () => {
+  it("is a generous viewport-relative margin so loads start well before the top", () => {
+    expect(olderPrefetchThreshold(628)).toBe(Math.round(628 * OLDER_PREFETCH_VIEWPORT_FACTOR)); // 942
+    expect(olderPrefetchThreshold(900)).toBe(Math.round(900 * OLDER_PREFETCH_VIEWPORT_FACTOR)); // 1350
+  });
+
+  it("never drops below the base threshold for tiny viewports", () => {
+    expect(olderPrefetchThreshold(10)).toBe(OLDER_LOAD_THRESHOLD_PX);
+    expect(olderPrefetchThreshold(0)).toBe(OLDER_LOAD_THRESHOLD_PX);
+  });
+
+  it("is always larger than the old at-the-top threshold for real viewports (loads earlier)", () => {
+    expect(olderPrefetchThreshold(628)).toBeGreaterThan(OLDER_LOAD_THRESHOLD_PX);
   });
 });
