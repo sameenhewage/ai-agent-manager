@@ -60,8 +60,10 @@ stay stable as new messages append at the end.
 - Initial load = **latest 50**, auto-scrolled to the bottom; scroll-up (or a "Load older
   messages" button) fetches the previous page via the cursor, **prepends** it, and **holds
   the reading position** (no jump to bottom).
-- **No realtime** (no WebSocket/SSE/polling) in this slice — manual retry/refresh only.
-  Realtime is a documented next step.
+- **No realtime in Slice 12E** (manual retry/refresh only). **Realtime is now MANDATORY** — specified
+  as **Slice 12F** (Realtime Monitoring + Automatic Agno Sync: **SSE** browser updates + automatic sync
+  freshness; the transcript **tail** updates live). See `docs/architecture/08` §5 and TD-081. Not yet
+  implemented (approval-gated).
 
 ## 3. Source of the transcript
 
@@ -113,12 +115,12 @@ not the phone number. Recommended **fallback rule**:
 - **If `name` is present** → show **display name + masked contact** (e.g. `J...` + `94•••••784`).
 - **If `name` is missing** → show **masked contact only** (current behaviour).
 
-> **TO VERIFY with product/AI dev before implementing (do NOT implement in this gate):**
-> (a) are the stored `name` values real customer names, and is it acceptable to display them
-> to dashboard operators? (b) should `name` itself be partially masked, or shown in full as a
-> CRM-style label? (c) confirm `(tenant_id, channel_id)` in `ai.customers` always equal the
-> dashboard's tenant/channel UUIDs as text (held true in this audit). This is a **future
-> slice** ("customer name display"), sequenced in `06` *after* the metric fix.
+> **Status: IMPLEMENTED** (read-only by-value join; masked-contact fallback). The pre-implementation
+> checks held: (a) `name` is a display label (not a phone) and is shown to operators with the masked id
+> as fallback; (b) `name` is shown as a CRM-style label (not re-masked) — revisit if product wants
+> partial masking; (c) `(tenant_id, channel_id)` in `ai.customers` equal the dashboard's tenant/channel
+> UUIDs as text (held in audit). **Open product question** (still tracked in `06` §6): confirm the
+> stored names are acceptable to display long-term, and whether to partially mask.
 
 ## 7. Security rules (unchanged, must hold for any name feature)
 

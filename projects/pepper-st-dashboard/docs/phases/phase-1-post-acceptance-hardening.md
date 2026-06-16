@@ -4,8 +4,11 @@
 - **Date:** 2026-06-16
 - **Status:** **Slice 12D EXECUTED (2026-06-16, TD-069); 12D-B boundary locked (TD-070); 12C EXECUTED
   (2026-06-16, TD-071 — filter/loading UX polish, UI-only); 12D-D EXECUTED (2026-06-16, TD-072 / ADR-0012 —
-  dashboard v2 schema simplification, DROP migration APPLIED to the live DB); 12A/12B/12E/12F/12G remain
-  planning.** Slice
+  dashboard v2 schema simplification, DROP migration APPLIED to the live DB); 12C-API EXECUTED (TD-073 /
+  ADR-0013 — API-driven loading); 12E EXECUTED (2026-06-16, TD-079 — WhatsApp-like chat pagination) plus the
+  Chat Monitor UX validation fix (TD-080); 12F REDEFINED (2026-06-16, TD-081) as _Realtime Monitoring +
+  Automatic Agno Sync_ — **mandatory SSE + auto-sync (planning/approval-gated)**; 12A/12B remain planning,
+  12G conditional.** Slice
   11B restored live data; Gate 12 analysed DB + product behaviour (`docs/database/07-…`,
   `docs/architecture/08-…`, `docs/product/05-…`). This doc breaks the findings into
   independently-approvable slices. **Each remaining slice starts only after explicit per-slice approval.**
@@ -25,7 +28,7 @@
 12B (cost/token)   ──▶ independent (read-only widgets)
 12C (filter UX)    ──▶ benefits from 12D
 12E (chat paging)  ──▶ benefits from 12D
-12F (real-time)    ──▶ after 12D + 12E (cheap reads + paged tail)
+12F (realtime+sync)──▶ MANDATORY; after 12D + 12E (cheap reads + paged tail)
 12G (rollups/index)──▶ conditional, last (only if scale demands; needs ADR)
 ```
 
@@ -169,29 +172,62 @@ Recommended order: **12A → 12D → 12B → 12C → 12E → 12F → (12G if/whe
   `docs/database/03`, decision log (TD-070), CONTEXT, handoff
   `docs/handoff/2026-06-16-slice-12d-b-agno-transcript-boundary-review.md`.
 
-## Slice 12E — Chat Monitor WhatsApp-like transcript pagination
+## Slice 12E — Chat Monitor WhatsApp-like transcript pagination — ✅ DONE (2026-06-16, TD-079)
 - **Goal:** newest-at-bottom, auto-scroll on open, **scroll-up loads older** pages with a stable scroll
-  anchor and a "new messages ↓" pill.
-- **Allowed:** add `?limit=N&before=<runIdx,msgIdx>` to the transcript API (server flattens once, slices
+  anchor and a load-older affordance.
+- **Allowed:** add `?limit=N&before=<cursor>` to the transcript API (server flattens once, slices
   page); client paging state + scroll-anchor + near-bottom autoscroll; keep masking + hide system/tool.
 - **Forbidden:** transcript duplication / new tables (that's 12G Option B); exposing raw ids; document
   scroll.
 - **DB writes:** none. **Migration:** none.
-- **Risk:** 🟠 medium — scroll-anchor correctness; cursor stability on ties (use `(runIdx,msgIdx)`).
-- **Verification:** `db:chat:verify` still PASS (masking/IDOR/no-leak/non-empty); Playwright for
-  scroll-up paging + anchor + new-message pill; large-conversation fixture test on the slice helper.
+- **Risk:** 🟠 medium — scroll-anchor correctness; cursor stability on ties.
+- **Verification:** `db:chat:verify` PASS (masking/IDOR/no-leak/non-empty); fixture tests on the pure
+  pagination helper; browser smoke for scroll-up paging + anchor hold.
+- **Outcome (delivered):** latest page on open + scroll-up **loads older** via an **opaque base64url
+  absolute-message-index cursor** (chosen over the `(runIdx,msgIdx)` candidate; pages never overlap),
+  scroll-position hold, auto-scroll to bottom, "Load older messages" affordance. Pure
+  `lib/chat-monitor/message-pagination.ts` (+ `message-pagination.test.ts`, 12). **No DB writes; `ai.*`
+  untouched; no message table.** Also shipped (UI-only): the **Chat Monitor UX validation fix** —
+  customer-LEFT / assistant-RIGHT bubbles, full-width rows, consolidated WhatsApp/Read-only badges
+  (**TD-080**). The realtime *tail* (live new messages) is **Slice 12F**. `typecheck` clean; **201/201**
+  tests; `build` green.
 
-## Slice 12F — Real-time monitoring (polling; SSE optional)
-- **Goal:** auto-refresh the conversation list + counters (and optionally tail the open transcript)
-  without manual reload; show "Live • updated HH:MM".
-- **Allowed:** client polling on a sensible cadence (list ~10–15s, counters ~30–60s), pause on hidden
-  tab, keep previous data while refreshing; **optional** SSE endpoint for the transcript tail.
-- **Forbidden:** WebSocket; DB `LISTEN/NOTIFY`; any outbound/control action; dependence on an
-  AI-platform webhook that doesn't exist yet.
-- **DB writes:** none. **Migration:** none.
-- **Risk:** 🟡 low–medium — connection/load hygiene (interval cleanup, backoff on error).
-- **Verification:** Playwright: list updates on poll; hidden-tab pause; counters refresh; no duplicate
-  fetch storms; read-only confirmed.
+## Slice 12F — Realtime Monitoring + Automatic Agno Sync (MANDATORY) — redefined 2026-06-16 (TD-081)
+- **Goal (mandatory):** the console behaves realtime **without** manual `db:agno:sync`. New Agno
+  sessions/runs appear in Dashboard/Analytics/Chat Monitor **automatically**; the browser receives live
+  updates via **SSE**; the server keeps the mapping fresh on its own. The coverage banner is a **safety
+  net**, not the normal operating state. Full technical design: `docs/architecture/08` §5.
+- **Realtime surfaces:** Chat Monitor conversation list; selected-chat transcript tail; Dashboard KPI
+  counters; Analytics counters/charts; coverage/mapped-session status.
+- **Event flow:** Agno session/run changes → server detects (webhook if Agno provides it, else a
+  short-interval read-through poll) → `syncAllActiveChannels` (read-only `ai.*` → `app_conversations`
+  metadata/index) → publish a **safe** event → browser SSE → client refetch/patch the affected surface
+  (`/api/dashboard`, `/api/analytics`, `/api/chat-monitor/conversations`,
+  `/api/chat-monitor/conversations/[id]/transcript`).
+- **Allowed:** a read-only **SSE** endpoint; a server-side change **detector** (webhook **or** polling
+  fallback) that triggers the existing sync; client refetch/patch; a sync **lock**; keep-previous-data
+  while refreshing.
+- **Transport:** **SSE preferred/mandatory** for the browser; **backend polling/read-through** only as a
+  detector/fallback; **AI webhook preferred if Agno can provide it** (not assumed); **WebSocket REJECTED
+  without explicit approval** (revisit only with Phase-2 human-handover, ADR-0009); **DB `LISTEN/NOTIFY`**
+  rejected unless Agno (the writer) emits notifies.
+- **Forbidden:** WebSocket (unapproved); transcript-body copy / message table /
+  `app_conversation_messages`; any `ai.*` write; raw phone / `user_id` / `external_contact_id` / Agno
+  `session_id` in an SSE payload or API (events carry only a **safe type** + the **internal conversation
+  UUID**); outbound WhatsApp/AI reply.
+- **DB writes:** **`dashboard.app_conversations` metadata/index only**, via the existing sync (no schema
+  change, no new table). **Migration:** none.
+- **Risk:** � medium — connection/interval hygiene (cleanup, backoff), sync-lock correctness, event
+  payload PII-safety, detector cadence vs load.
+- **TDD acceptance (must start RED):** (1) an unmapped new Agno session **auto-maps**; (2) SSE emits a
+  **safe** event; (3) Dashboard/Analytics **refetch** after an event; (4) Chat Monitor **list updates**;
+  (5) the **transcript tail updates**; (6) **no** raw phone/user/contact/Agno session id in event or API;
+  (7) a **lock** blocks duplicate concurrent syncs; (8) on sync **failure** the coverage warning stays +
+  the UI doesn't crash.
+- **Open dependency:** does the Agno/AI platform expose a **webhook/event**? If yes → use it as the
+  detector; if no → a short-interval read-through sync is the fallback (SSE still drives the browser UX).
+- **Verification:** the unit/integration tests above; `db:chat:verify` + `db:analytics:verify` still
+  PASS; browser smoke shows live updates with **no manual reload**, no PII, no console errors.
 
 ## Slice 12G — (Conditional, production-scale) rollups / message index
 - **Goal:** O(days) analytics and/or fast message paging once live-parse latency is user-visible **after

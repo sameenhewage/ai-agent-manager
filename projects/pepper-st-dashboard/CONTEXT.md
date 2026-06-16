@@ -69,8 +69,18 @@
   real metrics unchanged.** `typecheck` clean, **159/159** tests (21 new), `build` green; all 4 verifiers +
   reconfirm PASS (parity exact: conv 4 / turns 44 / tokens 1,010,101 / cost $0.097590316); browser smoke
   green (range→API fetch, URL sync, prev data stays, no PII leaks, no console errors).
-  **12A/12B/12E/12F/12G remain NOT implemented** (approval-gated). **Deploy data-blocker cleared**;
-  revisit deploy after the remaining perf/real-time slices. Parser intact. See
+  **Slice V2-TRUTH COMPLETE** (2026-06-16, TD-077/078): Business-Truth TDD Gate (see §7) + honest
+  metric-universe **coverage** (`liveValid`/`mapped`/`excluded`, masked refs) on `/api/dashboard` +
+  `/api/analytics` with a safety-net banner; empty assistant messages excluded. **Slice 12E COMPLETE**
+  (2026-06-16, TD-079): WhatsApp-like Chat Monitor pagination (opaque absolute-index cursor, scroll-up
+  loads older, **no message table**) **+ customer-name display** (`ai.customers.name`, masked fallback)
+  + the **Chat Monitor UX validation fix** (customer-LEFT / assistant-RIGHT bubbles, consolidated
+  WhatsApp/Read-only badges; TD-080). **Slice 12F REDEFINED** (2026-06-16, TD-081) as **_Realtime
+  Monitoring + Automatic Agno Sync_** — realtime is now **MANDATORY** (no manual `db:agno:sync` during
+  customer use; **SSE** browser updates + automatic sync freshness; the coverage banner is a safety net
+  only; design in `docs/architecture/08` §5). **That was a docs-only gate; 12F + 12A/12B remain
+  approval-gated, 12G conditional.** **Deploy data-blocker cleared**; revisit deploy after the realtime
+  slice. Parser intact. See
   `docs/database/07-old-vs-current-db-comparison.md`,
   `docs/architecture/08-dashboard-data-loading-and-realtime-strategy.md`,
   `docs/product/05-dashboard-analytics-chat-gaps.md`,

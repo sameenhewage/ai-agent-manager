@@ -20,9 +20,10 @@
 
 ## 1. Currently demo-ready
 
-- **Chat Monitor** — list + live, **masked**, IDOR-safe, retention-aware transcripts;
-  transcript switching works; no PII/session-id leaks (verified `db:chat:verify` + browser
-  smoke). **Strong demo surface.**
+- **Chat Monitor** — list + live, **masked**, IDOR-safe, retention-aware transcripts with
+  **WhatsApp-like pagination** (latest page on open, scroll-up loads older — Slice 12E) and
+  **customer names** (`ai.customers.name`, masked-contact fallback); customer-LEFT / assistant-RIGHT
+  bubbles; no PII/session-id leaks (verified `db:chat:verify` + browser smoke). **Strong demo surface.**
 - **Conversation/turn counts & transcripts** for the active set — reliable.
 - **Calm loading UX** — one "Updating…" indicator, previous data stays visible
   (Slice 12C-UX).
@@ -37,8 +38,8 @@
   ~4 active+live-mapped conversations contribute metrics.
 - **new vs returning** is per-conversation, not per-customer (may not match client mental
   model).
-- **No customer names** shown although `ai.customers.name` exists (5/5) — feels less polished
-  than it could be.
+- **Customer names** are now shown (`ai.customers.name`, read-only, masked-contact fallback) — but only
+  ~5 of 15 historical contacts have a name, so older conversations still fall back to the masked id.
 - **`ai.agno_metrics` is empty** — the "correct" date-sliced source is unavailable.
 - **`README.md` is stale** (says "Slice 1, no DB access") — documentation hygiene only, not a
   demo blocker. (Left unchanged in this gate; not in scope.)
@@ -63,7 +64,9 @@
 - **Do not** start Slice 12B cost/token expansion before the metric source decision (#1).
 - **Do not** persist transcript bodies into `dashboard.*` (ADR-0004).
 - **Do not** expose raw phone / `user_id` / `external_contact_id` / Agno `session_id`.
-- **Do not** implement chat pagination, real-time/polling, or onboarding in this push.
+- **Do not** implement realtime/SSE or onboarding **in a docs gate** — realtime is now the **mandatory
+  Slice 12F** (SSE + automatic Agno sync; see `docs/architecture/08` §5) and ships only after explicit
+  approval + failing tests first. *(Chat pagination already shipped in Slice 12E.)*
 
 ## 5. Acceptance checklist for the demo
 
@@ -90,6 +93,8 @@
 
 ## 7. Recommended next step
 
-**Settle the metric source-of-truth (`04` §5–§7) and pick the token/cost story.** That single
-decision unblocks the correct ordering of every later slice. **Stop here — this is a
-documentation gate.**
+**Two items now lead the queue (both approval-gated, both start with failing tests):** (1) **settle the
+metric source-of-truth** (`04` §5–§7) and pick the token/cost story; and (2) **Slice 12F — Realtime
+Monitoring + Automatic Agno Sync**, now **mandatory** (no manual `db:agno:sync` during customer use; SSE
+browser updates + automatic sync freshness — see `docs/architecture/08` §5 and TD-081). **Stop here —
+this is a documentation gate.**
