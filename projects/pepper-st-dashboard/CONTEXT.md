@@ -12,6 +12,14 @@
 > [`docs/v2/01-database-inventory.md`](./docs/v2/01-database-inventory.md). This
 > `CONTEXT.md` remains the **vocabulary** source of truth.
 
+> **Business hierarchy (LOCKED — ADR-0015 / `docs/architecture/09`):**
+> **`Tenant → Business → optional Location → Channel → Conversation → Agno Session`.** A **tenant is the
+> SaaS / billing / owner boundary** and **`tenant ≠ business`** — a tenant may run **many** businesses (a
+> **default business** is created at onboarding). **Do not** model the system as the old
+> `Tenant → Channel → Conversation`. Target schema = **7 core tables** (adds `app_businesses`,
+> `app_locations`, `app_ai_agent_bindings`, `app_realtime_outbox` to today's set); the migration is
+> **approval-gated / not yet applied** — PEPPER ST. currently runs as a **single default business**.
+
 - **Project:** `pepper-st-dashboard`
 - **Status:** Phase 1 — Slices 0–7C built (dense real-data **Dashboard** [KPIs + charts + recent], Chat Monitor [lazy-loaded `○ Static` shell, full-height workspace], Analytics report [two real charts]; full-page SaaS layout, real-data only, no document scroll)
 - **Last updated:** 2026-06-16
@@ -135,7 +143,7 @@ It is a **read-and-organize layer** with its own **`dashboard` schema** that
 |---|---|---|
 | WhatsApp conversation + AI replies | **Agno bot** (external) | Writes `ai.agno_sessions` |
 | Raw transcript (`runs[].messages[]`) | **Agno** (`ai` schema) | Dashboard reads, never copies |
-| Tenant / channel / customer / conversation mapping | **Dashboard** (`dashboard` schema) | `app_*` tables |
+| Tenant / business / location / channel / conversation mapping | **Dashboard** (`dashboard` schema) | `app_*` tables (target hierarchy: ADR-0015) |
 | Analytics, masking, retention enforcement | **Dashboard** | Query/access layer |
 | Products, checkout, orders | **Shopify** (external) | Out of scope entirely |
 
@@ -144,11 +152,24 @@ It is a **read-and-organize layer** with its own **`dashboard` schema** that
 ## 3. Glossary (canonical terms)
 
 ### Tenant
-A **business/client** that uses the dashboard (e.g. **PEPPER ST.**, ABC Fashion,
-XYZ Auto Care). A tenant is **not** a chat session and **not** a customer.
-Onboarding a new business creates a **fresh tenant** with a **fresh, empty,
-tenant-scoped dashboard**. Stored in `app_tenants`. Multi-tenancy is **mandatory
-from day one**, even though login/auth is parked.
+The **SaaS account / billing / owner boundary** (e.g. **PEPPER ST.**, *Sameen Group*).
+A tenant is **not** a business, branch, channel, chat session, or customer. A tenant has
+**one or many Businesses** — **`tenant ≠ business`** (ADR-0015); a **default business** is
+created at onboarding so single-business customers stay simple. Stored in `app_tenants`.
+Multi-tenancy is **mandatory from day one**, even though login/auth is parked.
+
+### Business / Brand
+A **brand, shop, or business line inside a tenant** (e.g. *PEPPER ST Fashion*; or *Sameen
+Bakery* / *Sameen Cafe* / *Sameen Catering* under one *Sameen Group* tenant). A tenant has
+**one or many**; a business belongs to **exactly one** tenant. **Target table
+`app_businesses`** (ADR-0015) — not yet migrated; PEPPER ST. runs on one default business.
+
+### Location / Branch *(optional)*
+A **branch / store / outlet / pickup location under a Business** (e.g. Colombo, Kandy,
+Galle). A business may have **0, 1, or many**. **`location_id = NULL` = not applicable or
+not known yet** (online-only business, or a shared channel before the branch is resolved)
+— **not** "branches are ignored". Branch-aware routing is a **premium** capability. **Target
+table `app_locations`** (ADR-0015).
 
 ### Channel
 A **source/integration** through which a tenant receives conversations
@@ -161,6 +182,11 @@ records to the upstream bot (`source_agent_id`, `source_team_id`,
 `agent_id = "${app_tenants.id}:${app_channels.id}"` (tenant-first; confirmed + live-verified) and
 matching it against `ai.agno_sessions.agent_id`. `source_agent_id` is an optional legacy cache only —
 the v1 literal `concierge` is obsolete.
+Under the **target model (ADR-0015)** a channel is scoped to a **Business** (and an optional
+**Location**); a business or branch may have **many** channels (WhatsApp, Instagram, Facebook,
+Website). The platform is stored as **`type`** and the provider id as a **separate**
+**`external_channel_id`** (e.g. Meta `phone_number_id`) — **never** store the platform name as the
+provider id. `location_id = NULL` on a channel = a **shared** channel (serves the whole business).
 
 ### Customer (end customer)
 A **person who chats with the tenant's bot**. The **registry is AI-owned**
@@ -188,6 +214,9 @@ timing (`first_at`, `last_at`) — **never** message bodies. Dashboard-owned
 `updated_at` is bumped when mapping refreshes `last_at`/`status`. Uniqueness is
 `(tenant_id, channel_id, agno_session_id)`; `external_contact_id` is **indexed,
 not unique**. Per-visit / per-day splitting is **parked** (see roadmap).
+**Ownership (target, ADR-0015):** every conversation also owns **`business_id`** (required) and an
+optional **`location_id`** (branch, NULL until resolved), plus `location_source` /
+`location_confidence`. Required scope is **`tenant_id` + `business_id` + `channel_id`**.
 
 ### Agno Session
 A row in **`ai.agno_sessions`** (external, read-only to us). Its **`session_id` is an opaque
@@ -228,6 +257,18 @@ separate identity table since ADR-0012). **Never stored as a number; never assum
 The value linking `app_conversations` → `ai.agno_sessions.session_id` (the opaque 32-char token).
 It is **distinct from** `external_contact_id` (the contact phone, from `user_id`) — in v2 they have
 **diverged**: one contact (`user_id`) can own many `session_id`s.
+
+### AI Agent Binding
+The mapping from a dashboard **scope** (tenant / business / location / channel) to an **external
+AI/Agno agent id** — **target table `app_ai_agent_bindings`** (ADR-0015). The Agno **`agent_id` format
+is never hard-coded** in app logic; it resolves through `external_agent_id`
+(`ai.agno_sessions.agent_id → app_ai_agent_bindings.external_agent_id → scope`). Supports one agent per
+business / channel / branch, or one shared agent, and provider changes without schema redesign.
+
+### Realtime Outbox
+**Target table `app_realtime_outbox`** (ADR-0015) holding **safe** realtime events for durable SSE
+delivery/recovery — **safe IDs + UI-ready DTOs only** (never raw phone, `runs`, `agno_session_id`, or
+`external_contact_id`). It backs the in-memory event bus (ADR-0014); the browser transport stays **SSE**.
 
 ### Tenant Entitlements
 The tenant's **current access/limits** configuration: `app_tenant_entitlements`
@@ -306,6 +347,11 @@ until the bot emits them through a stable contract.
   **Conversation** (our mapping record).
 - Don't call a tenant a "store", "account-as-session", or "workspace-as-session".
 - Don't call the phone an "id number" — it's an **External Contact ID** (text).
+- Don't conflate **Tenant** and **Business** — a tenant (billing/owner) may run **many** businesses
+  (ADR-0015). Don't model the system as `tenant → channel → conversation`; it is
+  **`tenant → business → optional location → channel → conversation`**.
+- Don't store a platform **name** (`"whatsapp"`) as a channel's **`external_channel_id`** — that is the
+  **provider-side id**; the platform is the separate **`type`**.
 
 ---
 

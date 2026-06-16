@@ -67,6 +67,10 @@
 - **Do not** implement realtime/SSE or onboarding **in a docs gate** — realtime is now the **mandatory
   Slice 12F** (SSE + automatic Agno sync; see `docs/architecture/08` §5) and ships only after explicit
   approval + failing tests first. *(Chat pagination already shipped in Slice 12E.)*
+- **Do not** build against the old `tenant → channel → conversation` model. The **locked** model is
+  **`Tenant → Business → optional Location → Channel → Conversation → Agno Session`** (`tenant ≠
+  business`) — **ADR-0015** + `docs/architecture/09`. Its schema migration, onboarding, realtime scope,
+  and UI filters are **approval-gated** (documented, **not started**).
 
 ## 5. Acceptance checklist for the demo
 
@@ -93,8 +97,17 @@
 
 ## 7. Recommended next step
 
-**Two items now lead the queue (both approval-gated, both start with failing tests):** (1) **settle the
-metric source-of-truth** (`04` §5–§7) and pick the token/cost story; and (2) **Slice 12F — Realtime
-Monitoring + Automatic Agno Sync**, now **mandatory** (no manual `db:agno:sync` during customer use; SSE
-browser updates + automatic sync freshness — see `docs/architecture/08` §5 and TD-081). **Stop here —
-this is a documentation gate.**
+**The Architecture Finalization Gate now leads the queue.** The multi-business hierarchy
+(**`Tenant → Business → optional Location → Channel → Conversation → Agno Session`**, `tenant ≠
+business`) is **documented and locked** in **ADR-0015** + **`docs/architecture/09`** (this is a
+docs-only gate — no code/migration/`ai.*`). **Await approval of that contract before** starting its
+(approval-gated) implementation: **(a)** schema-migration proposal (7-table target via
+expand→backfill→verify→enforce), **(b)** onboarding-flow update (tenant → default business → locations →
+channels → agent bindings → entitlements), **(c)** realtime-scope update (extend the ADR-0014 event
+contract with business/location/channel scope + safe deltas; add `app_realtime_outbox`; keep SSE), and
+**(d)** UI filters (business/location/channel).
+
+Also still queued (approval-gated, fail-first): **settle the metric source-of-truth** (`04` §5–§7) and
+the token/cost story; and resume **Slice 12F** realtime (foundations 12F-1/12F-2 built then paused for
+this gate — see `docs/architecture/08` §5, TD-081, ADR-0014). **Stop here — this is a documentation
+gate.**

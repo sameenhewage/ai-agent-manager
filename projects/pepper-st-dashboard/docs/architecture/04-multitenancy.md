@@ -3,14 +3,23 @@
 - **Project:** pepper-st-dashboard
 - **Status:** Phase 1 (docs-first) — proposal
 - **Last updated:** 2026-06-15
-- **Related:** ADR-0002, ADR-0008
+- **Related:** ADR-0002, ADR-0008, **ADR-0015**
+
+> **⚠ HIERARCHY SUPERSEDED (2026-06-16) — ADR-0015 / `architecture/09`.** The target model is
+> **`Tenant → Business → optional Location → Channel → Conversation → Agno Session`** with
+> **`tenant ≠ business`** (a tenant may run many businesses; a default business is created at
+> onboarding). The single-business `tenant → channel → conversation` description below is the **current
+> implementation** (migration to the multi-business model is approval-gated / not yet applied). The
+> shared-schema + row-level-scoping **principle is unchanged** — the target simply adds `business_id` and
+> optional `location_id` as further row-level scopes.
 
 ## Principle
 
 **Multi-tenancy is mandatory from day one**, even though login/auth is parked.
-A **tenant** is a business/client (PEPPER ST., ABC Fashion, XYZ Auto Care).
-Onboarding a new business **creates a fresh tenant** and a **fresh, empty,
-tenant-scoped dashboard**.
+A **tenant** is the **SaaS account / billing / owner boundary** (PEPPER ST., *Sameen Group*) — **not**
+a business (**`tenant ≠ business`**, ADR-0015). Onboarding a new client **creates a fresh tenant** with
+a **fresh, empty, tenant-scoped dashboard** **and a default business** under it (a tenant may add more
+businesses later).
 
 ## Isolation strategy: shared schema, row-level scoping
 
@@ -22,20 +31,32 @@ tenant-scoped dashboard**.
 Rationale: simplest correct model for many small tenants; avoids schema sprawl;
 keeps onboarding to inserting rows, not running DDL.
 
-## Tenant → channel → conversation
+## Hierarchy: Tenant → Business → optional Location → Channel → Conversation
+
+**Target model (ADR-0015 / `architecture/09`):**
 
 ```
-app_tenants (PEPPER ST.; status=active, onboarding_status=complete, timezone=Asia/Colombo)
-  └─ app_channels (WhatsApp; channel_key=whatsapp-main; source_agent_id=concierge, external_phone_number_id=…)
-       └─ app_conversations (agno_session_id → ai.agno_sessions;
-                              external_contact_id = contact phone, by value, masked)
-
-  (No app_customers / app_customer_identities — removed in 12D-D / ADR-0012.)
+app_tenants (Sameen Group — SaaS/billing/owner boundary; timezone=Asia/Colombo)
+  └─ app_businesses (PEPPER ST Fashion — a tenant may have MANY; default created at onboarding)
+       ├─ app_locations (Colombo / Kandy — OPTIONAL branch; 0..N; NULL = shared/unknown)
+       └─ app_channels (type=whatsapp|instagram|facebook|website; external_channel_id = provider id;
+            │             business_id required; location_id NULL = shared channel)
+            └─ app_conversations (tenant_id + business_id + channel_id required; location_id optional;
+                                   agno_session_id → ai.agno_sessions; external_contact_id by value, masked)
 ```
 
-- A tenant is **not** a session and **not** a customer.
+**Current implementation (single business, pre-migration):**
+
+```
+app_tenants (PEPPER ST.) → app_channels (WhatsApp) → app_conversations (agno_session_id → ai.agno_sessions)
+  (No app_customers / app_customer_identities — removed in 12D-D / ADR-0012; business/location columns are the ADR-0015 target.)
+```
+
+- A tenant is the **SaaS/billing/owner boundary** — **not** a business, session, or customer
+  (**`tenant ≠ business`**, ADR-0015).
 - `session_id` is **never** stored on `app_tenants`.
-- The bond to the upstream bot lives on `app_channels` via source-mapping fields.
+- The bond to the upstream bot lives on `app_channels` via source-mapping fields; under ADR-0015 the
+  Agno agent is resolved via **`app_ai_agent_bindings`** (no hard-coded `agent_id` format).
 
 ## Resolving an Agno session to a tenant
 

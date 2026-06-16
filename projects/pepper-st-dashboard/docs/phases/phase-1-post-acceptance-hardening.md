@@ -20,6 +20,25 @@
 
 ---
 
+## Architecture Finalization Gate — multi-business hierarchy (ADR-0015) — DOCS-ONLY (2026-06-16)
+
+- **Type:** documentation-only architecture contract. **No code, no migration, no `ai.*` change, no
+  commit/push** in this gate.
+- **Decision:** the dashboard model is **`Tenant → Business → optional Location → Channel →
+  Conversation → Agno Session`** (`tenant ≠ business`) — **ADR-0015** + **`docs/architecture/09`**. The
+  "exactly 4 tables" count from ADR-0012 is **superseded** (target = **7 core tables**:
+  `app_tenants`, `app_businesses`, `app_locations`, `app_channels`, `app_conversations`,
+  `app_ai_agent_bindings`, `app_realtime_outbox`); ADR-0012's **by-value contact + grain-lock**
+  principles are **kept**; `ai.*` stays **read-only** (mapping by value, no FK to `ai.*`).
+- **Blocks:** schema migration, onboarding, realtime-scope, and UI-filter implementation **until this
+  contract is approved.** Migration, when approved, is **expand → backfill → verify → enforce** (no
+  destructive change; default business backfilled under the existing PEPPER ST. tenant).
+- **Effect on 12F:** transport/detector stay per **ADR-0014** (in-process polling + SSE; Agno webhook
+  future-preferred); the **event contract gains scope ids + safe deltas** (ADR-0015) before realtime UI
+  wiring resumes.
+
+---
+
 ## Sequencing & dependencies
 
 ```
@@ -196,7 +215,12 @@ Recommended order: **12A → 12D → 12B → 12C → 12E → 12F → (12G if/whe
 - **Goal (mandatory):** the console behaves realtime **without** manual `db:agno:sync`. New Agno
   sessions/runs appear in Dashboard/Analytics/Chat Monitor **automatically**; the browser receives live
   updates via **SSE**; the server keeps the mapping fresh on its own. The coverage banner is a **safety
-  net**, not the normal operating state. Full technical design: `docs/architecture/08` §5.
+  net**, not the normal operating state. Full technical design: `docs/architecture/08` §5; architecture
+  decisions: **ADR-0014** (detector/transport) + **ADR-0015** (scope-aware event extension).
+  **Foundations built then PAUSED for the ADR-0015 architecture gate:** 12F-1 (safe event contract +
+  in-memory bus) and 12F-2 (SSE `/api/events/stream` route + `useRealtime` hook) shipped with tests +
+  dev SSE proof; the detector + UI wiring (12F-3…7) is **paused**, and the event contract will be
+  extended to **scope-aware** (tenant/business/location/channel) per ADR-0015 before resuming.
 - **Realtime surfaces:** Chat Monitor conversation list; selected-chat transcript tail; Dashboard KPI
   counters; Analytics counters/charts; coverage/mapped-session status.
 - **Event flow:** Agno session/run changes → server detects (webhook if Agno provides it, else a

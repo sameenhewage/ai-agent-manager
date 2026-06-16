@@ -137,6 +137,17 @@ materialisation of already-correct live math — add them when scale demands, no
 > and must start with failing tests (CONTEXT.md §7). No realtime code in this gate; no WebSocket
 > without explicit approval.**
 
+> **Realtime architecture decided + extended (2026-06-16).** The 12F transport/detector decision is
+> **ADR-0014**: **the current 12F implementation uses an in-process polling detector; the Agno webhook is
+> the future-preferred migration path; the browser transport remains SSE.** The realtime **scope** is
+> then extended by **ADR-0015 / `architecture/09`** (multi-business model): events become **scope-aware**
+> — `tenant_id`, `business_id`, `location_id` *(nullable)*, `channel_id`, `conversation_id` — and update
+> the UI via **safe deltas/patches** (no whole-API refetch per message). A durable **`app_realtime_outbox`**
+> table is the target backing for the in-memory bus (delivery/recovery). **Transport stays SSE; no
+> WebSocket; no `LISTEN/NOTIFY` on `ai.*`; no Redis/queue.** §5 below is the original single-business
+> design; the multi-business **scope** (tenant → business → optional location → channel → conversation)
+> layers on top per ADR-0015 — it does **not** revert to the old `tenant → channel → conversation` model.
+
 **Boundary reminder:** the dashboard **monitors**; the AI platform owns message processing and replies.
 So real-time here means *"freshly observed read state"*, never bi-directional control.
 
@@ -160,7 +171,7 @@ So real-time here means *"freshly observed read state"*, never bi-directional co
 Agno session/run changes
   → server detects change            (webhook if Agno provides it, else short-interval read-through poll)
   → sync dashboard.app_conversations metadata/index   (read-only ai.* → syncAllActiveChannels)
-  → publish a SAFE event             (event type + internal conversation UUID only)
+  → publish a SAFE event             (event type + internal conversation UUID; + business/location/channel SCOPE ids and safe deltas per ADR-0015)
   → browser receives the SSE event
   → client refetches/patches the affected surface
         /api/dashboard · /api/analytics · /api/chat-monitor/conversations
@@ -171,9 +182,9 @@ Agno session/run changes
 
 | Transport | Role | Verdict |
 |---|---|---|
-| **SSE** (server→client) | browser live updates for a read-only dashboard | **Preferred / mandatory** for 12F |
-| **Backend polling / read-through sync** | server-side change **detector + freshness** | **Acceptable as detector/fallback** — UX still realtime via SSE/refetch |
-| **AI-platform webhook/event** | cleanest change detector | **Preferred IF Agno can provide it** — not assumed (open dependency) |
+| **SSE** (server→client) | browser live updates for a read-only dashboard | **Decided — ADR-0014** (mandatory transport for 12F; unchanged by ADR-0015) |
+| **Backend polling / read-through sync** | server-side change **detector + freshness** | **Current detector — ADR-0014** (in-process polling); UX still realtime via SSE/refetch |
+| **AI-platform webhook/event** | cleanest change detector | **Future-preferred — ADR-0014/0015** (swaps the detector without changing the SSE contract); not assumed |
 | **WebSocket** | bi-directional | **Rejected** unless/until human-handover send/reply is approved (ADR-0009, Phase 2). **No WS without explicit approval.** |
 | **DB `LISTEN/NOTIFY`** | needs the writer to emit notifies | **Rejected** unless Agno (the writer) emits notifications |
 
@@ -183,7 +194,10 @@ Agno session/run changes
 - **No** transcript-body copy; **no** message table / `app_conversation_messages` (ADR-0004 + the
   boundary lock below).
 - **No raw PII** in any SSE payload or API — no phone / `user_id` / `external_contact_id` / Agno
-  `session_id`. An SSE event carries only a **safe event type** + the **internal conversation UUID**.
+  `session_id` / raw `runs` / `session_data`. The current 12F event carries a **safe event type** + the
+  **internal conversation UUID**; under **ADR-0015** it additionally carries the **safe scope ids**
+  (`business_id`/`location_id`/`channel_id`) and may carry **safe UI-ready deltas** (e.g. last-message
+  preview/text — already shown in Chat Monitor, **not** raw identifiers). Raw ids remain forbidden.
 - A **lock** prevents duplicate concurrent syncs; on sync **failure** the coverage warning stays and
   the UI does not crash.
 

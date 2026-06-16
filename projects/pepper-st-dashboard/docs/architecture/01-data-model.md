@@ -18,6 +18,15 @@ Logical model for the `dashboard` schema. Physical SQL is in
 > design context** — do **not** reintroduce the customer/identity tables. Current contract:
 > `docs/database/03-dashboard-data-contract.md`.
 
+> **⚠ HIERARCHY SUPERSEDED (2026-06-16) — ADR-0015 / `architecture/09`.** This model assumes
+> **`tenant → channel → conversation`** with `tenant ≈ business`. The **target** model is
+> **`Tenant → Business → optional Location → Channel → Conversation → Agno Session`** (`tenant ≠
+> business`): the schema grows to **7 core tables** — adding `app_businesses`, `app_locations`,
+> `app_ai_agent_bindings`, `app_realtime_outbox`, plus `business_id` (required) and `location_id`
+> (nullable) on `app_channels` + `app_conversations`. The 4-table description below is the **current
+> implementation** (migration via expand→backfill→verify→enforce is **approval-gated / not yet
+> applied**). ADR-0012's **by-value contact + grain-lock** principles are **kept**.
+
 ## Entities and relationships
 
 ```

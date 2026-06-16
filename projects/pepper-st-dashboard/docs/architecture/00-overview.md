@@ -56,8 +56,12 @@ the **dashboard** and the existing **Agno** AI agent.
 
 ## Logical components (Phase 1)
 
-- **Mapping/index layer** (`dashboard.app_*`): tenants, channels, customers,
-  customer identities, conversations, tenant entitlements.
+- **Mapping/index layer** (`dashboard.app_*`): tenants, channels, conversations,
+  tenant entitlements. *(The dashboard customers/identities tables were removed — ADR-0012; the
+  contact is stored **by value** on `app_conversations.external_contact_id`.)* **Target hierarchy
+  (ADR-0015 / `architecture/09`):** tenant → **business** → optional **location** → channel →
+  conversation, adding `app_businesses`, `app_locations`, `app_ai_agent_bindings`,
+  `app_realtime_outbox` (migration approval-gated / not yet applied).
 - **Agno read adapter**: resolves an `agno_session_id` → live transcript + metrics
   from `ai.agno_sessions`, applying retention + masking.
 - **Analytics aggregator**: computes real metrics over `ai.agno_sessions` for a
