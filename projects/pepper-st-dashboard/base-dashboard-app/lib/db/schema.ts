@@ -14,9 +14,10 @@ import {
 /**
  * Dashboard-owned schema (Slice 2 — PROPOSAL ONLY, not applied).
  *
- * Drizzle implementation of docs/architecture/02-schema-proposal.sql.md. Six
- * `dashboard.app_*` tables. Multi-tenant from day one; every operational row
- * carries `tenant_id`. The canonical transcript stays in the Agno/WhatsApp
+ * Drizzle implementation of docs/architecture/02-schema-proposal.sql.md. Four
+ * `dashboard.app_*` tables (Slice 12D-D / ADR-0012 removed the app_customers +
+ * app_customer_identities CRM model — `ai.customers` owns the contact registry).
+ * Multi-tenant from day one; every operational row carries `tenant_id`. The canonical transcript stays in the Agno/WhatsApp
  * pipeline — there is NO message table and NO foreign key into `ai.*`
  * (`agno_session_id` links by value only). Entitlements carry NO hidden product
  * defaults: `plan_code` / `is_fully_enabled` are NOT NULL with no default;
@@ -80,49 +81,12 @@ export const appChannels = dashboard.table(
   ]
 );
 
-/** A tenant-scoped end customer (the person chatting with the bot). */
-export const appCustomers = dashboard.table(
-  "app_customers",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => appTenants.id, { onDelete: "cascade" }),
-    displayName: text("display_name"), // nullable: Agno has no name
-    createdAt: tz("created_at").notNull().defaultNow(),
-    updatedAt: tz("updated_at").notNull().defaultNow(),
-  },
-  (t) => [index("app_customers_tenant_idx").on(t.tenantId)]
-);
-
-/** External contact id (WhatsApp phone, TEXT) per channel — many identities per customer. */
-export const appCustomerIdentities = dashboard.table(
-  "app_customer_identities",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => appTenants.id, { onDelete: "cascade" }),
-    customerId: uuid("customer_id")
-      .notNull()
-      .references(() => appCustomers.id, { onDelete: "cascade" }),
-    channelId: uuid("channel_id")
-      .notNull()
-      .references(() => appChannels.id, { onDelete: "cascade" }),
-    externalContactId: text("external_contact_id").notNull(),
-    createdAt: tz("created_at").notNull().defaultNow(),
-  },
-  (t) => [
-    unique("app_cust_ident_unique").on(
-      t.tenantId,
-      t.channelId,
-      t.externalContactId
-    ),
-    index("app_cust_ident_customer_idx").on(t.customerId),
-  ]
-);
-
-/** Mapping record for one Agno session. NO message bodies; NO FK into ai.*. */
+/**
+ * Lightweight index/status row for ONE Agno session (Slice 12D-D / ADR-0012). NO message
+ * bodies; NO FK into `ai.*`; NO customer/identity model — the contact is stored by value on
+ * `external_contact_id` (the AI platform's `ai.customers` / `ai.agno_sessions.user_id` is the
+ * canonical contact registry). One Agno session => one row; one contact => MANY rows.
+ */
 export const appConversations = dashboard.table(
   "app_conversations",
   {
@@ -130,18 +94,14 @@ export const appConversations = dashboard.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => appTenants.id, { onDelete: "cascade" }),
-    customerId: uuid("customer_id")
-      .notNull()
-      .references(() => appCustomers.id, { onDelete: "cascade" }),
-    customerIdentityId: uuid("customer_identity_id")
-      .notNull()
-      .references(() => appCustomerIdentities.id, { onDelete: "cascade" }),
     channelId: uuid("channel_id")
       .notNull()
       .references(() => appChannels.id, { onDelete: "cascade" }),
     // Link by value to ai.agno_sessions.session_id — deliberately NO cross-schema FK.
     agnoSessionId: text("agno_session_id").notNull(),
-    externalContactId: text("external_contact_id").notNull(), // cached
+    // The external contact id (WhatsApp phone or opaque user_id) lives directly here and is
+    // masked on read. NO customer/identity table (ADR-0012); `ai.customers` is the registry.
+    externalContactId: text("external_contact_id").notNull(),
     status: text("status").notNull().default("open"), // dashboard-owned, NOT from Agno
     firstAt: tz("first_at"),
     lastAt: tz("last_at"),
@@ -155,9 +115,7 @@ export const appConversations = dashboard.table(
       sql`${t.status} in ('open','resolved','archived')`
     ),
     index("app_conv_tenant_last_idx").on(t.tenantId, t.lastAt.desc()),
-    index("app_conv_customer_idx").on(t.customerId),
-    index("app_conv_identity_idx").on(t.customerIdentityId),
-    // external_contact_id is INDEXED but NOT UNIQUE.
+    // external_contact_id is INDEXED but NOT UNIQUE (one contact => many conversations).
     index("app_conv_contact_idx").on(
       t.tenantId,
       t.channelId,
@@ -203,7 +161,5 @@ export const appTenantEntitlements = dashboard.table(
 export type AppTenant = typeof appTenants.$inferSelect;
 export type NewAppTenant = typeof appTenants.$inferInsert;
 export type AppChannel = typeof appChannels.$inferSelect;
-export type AppCustomer = typeof appCustomers.$inferSelect;
-export type AppCustomerIdentity = typeof appCustomerIdentities.$inferSelect;
 export type AppConversation = typeof appConversations.$inferSelect;
 export type AppTenantEntitlement = typeof appTenantEntitlements.$inferSelect;

@@ -8,6 +8,16 @@ Logical model for the `dashboard` schema. Physical SQL is in
 `02-schema-proposal.sql.md` (reviewable, **not applied**). Mapping to Agno is in
 `03-agno-mapping.md`.
 
+> **⚠ SUPERSEDED IN PART (2026-06-16) — Slice 12D-D / ADR-0012.** This Gate-1 proposal modelled a
+> dashboard-side **customer/identity** model. That model was **removed**: `app_customers` and
+> `app_customer_identities` (and `app_conversations.customer_id` / `customer_identity_id`) **no longer
+> exist**. **The dashboard owns exactly 4 tables** — `app_tenants`, `app_channels`, `app_conversations`,
+> `app_tenant_entitlements`. The external contact id is stored **by value** on
+> `app_conversations.external_contact_id` (indexed, **not** unique); the contact registry is AI-owned
+> (`ai.customers` / `ai.agno_sessions.user_id`). The diagrams/sections below are kept as **historical
+> design context** — do **not** reintroduce the customer/identity tables. Current contract:
+> `docs/database/03-dashboard-data-contract.md`.
+
 ## Entities and relationships
 
 ```
@@ -28,14 +38,18 @@ app_conversations *────────────────────�
 app_tenants 1───1 app_tenant_entitlements
 ```
 
-- A **tenant** has many **channels**, **customers**, **conversations**, and
-  **exactly one** current entitlement row (`app_tenant_entitlements`, **1───1**).
-  Plan/subscription history is parked.
-- A **customer** has many **identities** (one per channel/contact id) and many
-  **conversations**.
-- A **conversation** belongs to one tenant + one channel + one customer + one
-  **customer identity** (`customer_identity_id`) and references exactly one Agno
-  session by `agno_session_id`.
+> *The diagram above is the original 6-table proposal, kept as **history**. **Current model = 4 tables**;
+> the `app_customers` / `app_customer_identities` boxes were **removed in 12D-D / ADR-0012** — the contact
+> is the `external_contact_id` value stored directly on `app_conversations`.*
+
+- A **tenant** has many **channels** and **conversations**, and **exactly one**
+  current entitlement row (`app_tenant_entitlements`, **1───1**). Plan/subscription
+  history is parked.
+- A **conversation** belongs to one tenant + one channel, carries the contact **by
+  value** in `external_contact_id` (masked; indexed, **not** unique — one contact may
+  own many conversations), and references exactly one Agno session by
+  `agno_session_id`. *(There is no dashboard-side customer/identity row — removed in
+  12D-D / ADR-0012; the contact registry is AI-owned.)*
 
 ## Entity summaries
 
@@ -59,24 +73,23 @@ source-mapping fields, `is_active`, `created_at`, `updated_at`.
 Unique: **`(tenant_id, channel_key)`** — deliberately **not** `(tenant_id, type)`,
 so a tenant can have **more than one** WhatsApp channel later.
 
-### app_customers
-A tenant-scoped end customer (person).
-Key fields: `id`, `tenant_id`, `display_name` (nullable — Agno has no name),
-`created_at`, `updated_at`.
+### ~~app_customers~~ — REMOVED (12D-D / ADR-0012)
+The v1 tenant-scoped customer table. **Dropped** in Slice 12D-D; the customer
+registry is AI-owned (`ai.customers`). **Not reintroduced.**
 
-### app_customer_identities
-Links a customer to an external contact id on a channel.
-Key fields: `id`, `tenant_id`, `customer_id`, `channel_id`,
-`external_contact_id` (text, the phone in Phase 1), `created_at`.
-Unique: `(tenant_id, channel_id, external_contact_id)`.
+### ~~app_customer_identities~~ — REMOVED (12D-D / ADR-0012)
+The v1 customer↔contact-id link table. **Dropped** in Slice 12D-D. The external
+contact id now lives **by value** on `app_conversations.external_contact_id`
+(indexed, **not** unique) — there is **no** separate identity table.
 
 ### app_conversations
 The Agno↔dashboard mapping record. **No message bodies.**
-Key fields: `id`, `tenant_id`, `customer_id`, `customer_identity_id`,
-`channel_id`, `agno_session_id` (text → `ai.agno_sessions.session_id`),
-`external_contact_id` (cached), `status` (dashboard-owned, one of
-`open`/`resolved`/`archived` — CHECK-constrained), `first_at`, `last_at`,
-`created_at`, `updated_at` (bumped when mapping refreshes `last_at`/`status`).
+Key fields: `id`, `tenant_id`, `channel_id`, `agno_session_id` (text →
+`ai.agno_sessions.session_id`), `external_contact_id` (the contact, stored **by
+value**, masked on read — **no `customer_id`/`customer_identity_id` since 12D-D /
+ADR-0012**), `status` (dashboard-owned, one of `open`/`resolved`/`archived` —
+CHECK-constrained), `first_at`, `last_at`, `created_at`, `updated_at` (bumped when
+mapping refreshes `last_at`/`status`).
 Unique: **`(tenant_id, channel_id, agno_session_id)`** only.
 `external_contact_id` is **indexed, not unique** (one contact may own several
 conversations once sessions diverge from the phone — ADR-0008).
@@ -109,10 +122,10 @@ have **no default** (omit → `NULL` → unlimited). Plan/subscription history i
 |---|---|---|
 | app_tenants | `slug` | — |
 | app_channels | `(tenant_id, channel_key)` | `tenant_id` |
-| app_customers | — | `tenant_id` |
-| app_customer_identities | `(tenant_id, channel_id, external_contact_id)` | `customer_id` |
-| app_conversations | `(tenant_id, channel_id, agno_session_id)` | `(tenant_id, last_at DESC)`, `customer_id`, `customer_identity_id`, `(tenant_id, channel_id, external_contact_id)` *(non-unique)* |
+| app_conversations | `(tenant_id, channel_id, agno_session_id)` | `(tenant_id, last_at DESC)`, `(tenant_id, channel_id, external_contact_id)` *(non-unique)* |
 | app_tenant_entitlements | `(tenant_id)` *(1:1 per tenant)* | `tenant_id` |
+
+*(`app_customers` / `app_customer_identities` removed in 12D-D / ADR-0012.)*
 
 All FKs reference `app_tenants(id)` (and parent rows) with `tenant_id` carried
 explicitly for scoping and composite uniqueness.

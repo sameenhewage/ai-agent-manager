@@ -1,19 +1,13 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, gte, lt, ne } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import * as schema from "../db/schema";
 import { appChannels, appConversations, appTenantEntitlements } from "../db/schema";
 import { resolveCurrentTenant } from "../tenant/context";
-import { parseTranscript } from "../agno/parser";
 import { deriveExpectedAgentId } from "../agno/mapping";
-import type { AgnoSession } from "../agno/types";
 import { clampToRetention, DEFAULT_TIME_ZONE, resolveRange, type RangeKey } from "./ranges";
-import {
-  aggregateAnalytics,
-  type AnalyticsSessionInput,
-  type AnalyticsTotals,
-  type DailyPoint,
-} from "./aggregate";
+import { aggregateAnalytics, type AnalyticsTotals, type DailyPoint } from "./aggregate";
+import { buildAnalyticsInputs, collectSessionIds, type SessionMetricsRow } from "./universe";
 
 /**
  * Server-side Analytics data flow (Slice 6). Universe = the tenant/channel's MAPPED
@@ -55,17 +49,19 @@ export interface GetAnalyticsParams {
   now?: Date;
 }
 
-interface AnalyticsRow {
-  session_id: string;
-  runs: unknown;
-  created_at: number | string | null;
-  updated_at: number | string | null;
-  total_tokens: string | null;
-  cost: string | null;
-}
-
-/** READ-ONLY: runs + token/cost metrics for an agent. Only SELECT; never mutates `ai.*`. */
-async function readAnalyticsRows(pool: Pool, agentId: string): Promise<AnalyticsRow[]> {
+/**
+ * READ-ONLY: fetch runs + token/cost metrics for a SPECIFIC set of sessions by `session_id`
+ * (the `ai.agno_sessions` PRIMARY KEY), scoped to the derived `agent_id` for defense-in-depth.
+ * This is the Slice 12D performance path: it uses the PK instead of a `WHERE agent_id = $1`
+ * sequential scan, and fetches ONLY the active/in-range universe — not every session under
+ * the agent. Only SELECT; never mutates `ai.*`.
+ */
+async function readSessionMetricsByIds(
+  pool: Pool,
+  sessionIds: string[],
+  agentId: string
+): Promise<SessionMetricsRow[]> {
+  if (sessionIds.length === 0) return [];
   const res = await pool.query(
     `select session_id,
             runs,
@@ -74,16 +70,11 @@ async function readAnalyticsRows(pool: Pool, agentId: string): Promise<Analytics
             (session_data->'session_metrics'->>'total_tokens') as total_tokens,
             (session_data->'session_metrics'->>'cost')         as cost
        from ai.agno_sessions
-      where agent_id = $1`,
-    [agentId]
+      where session_id = any($1::text[])
+        and agent_id = $2`,
+    [sessionIds, agentId]
   );
-  return res.rows as AnalyticsRow[];
-}
-
-function num(value: string | null): number | null {
-  if (value == null) return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  return res.rows as SessionMetricsRow[];
 }
 
 export async function getAnalyticsData(
@@ -126,7 +117,12 @@ export async function getAnalyticsData(
   const to = resolved.to;
   const requestedFromISO = requestedFrom ? requestedFrom.toISOString() : null;
 
-  // Tenant/channel-scoped mapped conversations = the analytics universe.
+  // The analytics UNIVERSE is the tenant/channel's ACTIVE (non-archived) conversations,
+  // narrowed to the range AT THE DATABASE using the indexed, dashboard-owned `last_at`
+  // (`app_conv_tenant_last_idx`). This is the SAME [from, to) bound the aggregate applies in
+  // memory (and the same one db:analytics:verify checks), so totals are unchanged — we simply
+  // avoid fetching/parsing out-of-range sessions. `last_at` is whole-seconds (set from the
+  // session's epoch `updated_at` at sync), so there is no sub-millisecond boundary edge.
   const conversations = await db
     .select()
     .from(appConversations)
@@ -134,40 +130,21 @@ export async function getAnalyticsData(
       and(
         eq(appConversations.tenantId, tenant.id),
         eq(appConversations.channelId, channel.id),
-        ne(appConversations.status, "archived") // exclude retired (archived) conversations
+        ne(appConversations.status, "archived"), // exclude retired (archived) conversations
+        gte(appConversations.lastAt, from),
+        lt(appConversations.lastAt, to)
       )
     );
 
-  // READ-ONLY Agno read (runs + metrics), joined in memory by session id.
-  const rows = await readAnalyticsRows(pool, deriveExpectedAgentId(channel.tenantId, channel.id));
-  const rowById = new Map(rows.map((r) => [String(r.session_id), r]));
-
-  const inputs: AnalyticsSessionInput[] = conversations.map((c) => {
-    const row = rowById.get(c.agnoSessionId);
-    let turnCount = 0;
-    let messageCount = 0;
-    if (row) {
-      const session: AgnoSession = {
-        session_id: c.agnoSessionId,
-        runs: (Array.isArray(row.runs) ? row.runs : null) as AgnoSession["runs"],
-        created_at: row.created_at != null ? Number(row.created_at) : null,
-        updated_at: row.updated_at != null ? Number(row.updated_at) : null,
-      };
-      // Analytics cap is applied at the RANGE level (below), not per message.
-      const parsed = parseTranscript(session, { retentionDays: null, now });
-      turnCount = parsed.turnCount;
-      messageCount = parsed.messageCount;
-    }
-    return {
-      conversationId: c.id,
-      firstAt: c.firstAt ?? null,
-      lastAt: c.lastAt ?? null,
-      totalTokens: row ? num(row.total_tokens) : null,
-      cost: row ? num(row.cost) : null,
-      turnCount,
-      messageCount,
-    };
-  });
+  // READ-ONLY Agno read: fetch ONLY this universe's sessions BY `session_id` (PK), never a
+  // `WHERE agent_id = $1` scan. Joined in memory by value into PII-free analytics inputs.
+  const sessionIds = collectSessionIds(conversations);
+  const rows = await readSessionMetricsByIds(
+    pool,
+    sessionIds,
+    deriveExpectedAgentId(channel.tenantId, channel.id)
+  );
+  const inputs = buildAnalyticsInputs(conversations, rows, now);
 
   const { totals, series } = aggregateAnalytics(inputs, { from, to, timeZone });
 

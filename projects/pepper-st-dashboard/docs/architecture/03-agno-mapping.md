@@ -8,6 +8,12 @@
 How dashboard concepts map to the **read-only** `ai.agno_sessions` table. Based
 on Stage 1 read-only inspection (PostgreSQL 16.9).
 
+> **⚠ Updated (2026-06-16) — Slice 12D-D / ADR-0012.** The dashboard's `app_customers` /
+> `app_customer_identities` tables were **removed**; the contact is stored **by value** on
+> `app_conversations.external_contact_id` (masked), sourced from `ai.agno_sessions.user_id`. The
+> `app_customer_identities` row in the mapping table below is therefore **obsolete**. Current contract:
+> `docs/database/03-dashboard-data-contract.md`.
+
 ## Source of truth: `ai.agno_sessions`
 
 Columns (15): `session_id` (varchar PK), `session_type` (NOT NULL),
@@ -34,7 +40,7 @@ Observed in demo data:
 |---|---|---|
 | `app_conversations.agno_session_id` | `session_id` | Link by value; no cross-schema FK |
 | `app_conversations.external_contact_id` | `session_id` | Same value in Phase 1 (phone) |
-| `app_customer_identities.external_contact_id` | `session_id` | Phone; stored as TEXT, masked on display |
+| ~~`app_customer_identities.external_contact_id`~~ | — | **Removed in 12D-D / ADR-0012** — no identity table; the contact lives on `app_conversations.external_contact_id` (sourced from `user_id`, masked) |
 | `app_conversations.first_at` | `to_timestamp(created_at)` | epoch seconds → timestamptz |
 | `app_conversations.last_at` | `to_timestamp(updated_at)` | epoch seconds → timestamptz |
 | Channel binding | `agent_id` (+ future team/business/phone-number id) | matches an **active** `app_channels.source_agent_id`; must resolve to **exactly one** channel (see Channel resolution) |

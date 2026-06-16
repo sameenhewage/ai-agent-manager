@@ -4,11 +4,10 @@ import { PageHeader } from "@/components/shell/page-header";
 import { EmptyState } from "@/components/shell/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { getDb, getPool, maskDbUrl } from "@/lib/db/client";
-import { getAnalyticsData, type AnalyticsData } from "@/lib/analytics/service";
+import { getAnalyticsData } from "@/lib/analytics/service";
 import { getConversationList } from "@/lib/chat-monitor/service";
-import type { ConversationListItem } from "@/lib/chat-monitor/presenter";
 import { parseRangeParams } from "@/lib/analytics/ranges";
-import { Dashboard } from "@/components/dashboard/dashboard";
+import { Dashboard, type DashboardData } from "@/components/dashboard/dashboard";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -33,8 +32,7 @@ export default async function DashboardPage({
   const sp = await searchParams;
   const { key } = parseRangeParams({ range: sp.range });
 
-  let data: AnalyticsData | null = null;
-  let recent: ConversationListItem[] = [];
+  let initialData: DashboardData | null = null;
   let failed = false;
   try {
     const db = getDb();
@@ -43,8 +41,11 @@ export default async function DashboardPage({
       getAnalyticsData(db, pool, { rangeKey: key }),
       getConversationList(db, pool),
     ]);
-    data = analytics;
-    recent = list.conversations;
+    initialData = {
+      analytics,
+      recent: list.conversations,
+      restrictedCount: list.restrictedCount,
+    };
   } catch (err) {
     failed = true;
     console.error(
@@ -54,7 +55,7 @@ export default async function DashboardPage({
     );
   }
 
-  if (failed || !data) {
+  if (failed || !initialData) {
     return (
       <div className="flex flex-col gap-4">
         <PageHeader
@@ -71,5 +72,5 @@ export default async function DashboardPage({
     );
   }
 
-  return <Dashboard data={data} recent={recent} rangeKey={key} />;
+  return <Dashboard initialData={initialData} initialRange={key} />;
 }

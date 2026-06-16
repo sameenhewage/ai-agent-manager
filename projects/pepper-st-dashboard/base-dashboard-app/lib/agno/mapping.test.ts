@@ -106,22 +106,21 @@ describe("buildConversationValues", () => {
   const ids = {
     tenantId: "t1",
     channelId: "c1",
-    customerId: "cu1",
-    customerIdentityId: "ci1",
     externalContactId: "94714128890", // resolved by the caller from user_id
   };
 
-  it("links by value: agno_session_id = opaque session_id; contact = user_id", () => {
+  it("links by value: agno_session_id = opaque session_id; contact = user_id (no customer/identity ids — ADR-0012)", () => {
     const v = buildConversationValues(session, ids);
     expect(v.tenantId).toBe("t1");
     expect(v.channelId).toBe("c1");
-    expect(v.customerId).toBe("cu1");
-    expect(v.customerIdentityId).toBe("ci1");
     expect(v.agnoSessionId).toBe("f".repeat(32));
     expect(typeof v.agnoSessionId).toBe("string");
     expect(v.externalContactId).toBe("94714128890");
     expect(v.status).toBe("open");
     expect(v.firstAt?.getTime()).toBe(100 * 1000);
     expect(v.lastAt?.getTime()).toBe(200 * 1000);
+    // the dashboard conversation index carries NO duplicate customer/identity keys
+    expect("customerId" in v).toBe(false);
+    expect("customerIdentityId" in v).toBe(false);
   });
 });

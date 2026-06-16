@@ -14,14 +14,12 @@
 |---|---|---|
 | app_tenants | <y/n> | `timezone` present |
 | app_channels | <y/n> | `(tenant_id, channel_key)` unique |
-| app_customers | <y/n> | |
-| app_customer_identities | <y/n> | |
-| app_conversations | <y/n> | **no FK** to `ai.*` |
+| app_conversations | <y/n> | **no FK** to `ai.*`; `external_contact_id` by value (ADR-0012 — no customer/identity tables) |
 | app_tenant_entitlements | <y/n> | explicit (no hidden defaults); nullable retention |
 
 ## Boundary checks
 
-- **6 tables only**; **no** forbidden tables: <ok>
+- **4 tables only** (ADR-0012: `app_tenants`, `app_channels`, `app_conversations`, `app_tenant_entitlements`); **no** forbidden tables (incl. the removed `app_customers` / `app_customer_identities`): <ok>
 - **No FK** from `dashboard.*` into `ai.*`: <ok>
 - Nothing applied; `ai.agno_*` untouched: <ok>
 

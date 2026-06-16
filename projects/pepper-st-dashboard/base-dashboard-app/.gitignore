@@ -30,5 +30,11 @@ yarn-error.log*
 .env
 .env*.local
 
+# local DB dumps / backups (raw customer PII: phone numbers + transcripts — NEVER commit).
+# NOTE: drizzle/*.sql migrations are DDL-only and ARE committed; these are data dumps.
+/pepper-db-review.sql
+/backups/
+*.dump
+
 # typescript
 *.tsbuildinfo

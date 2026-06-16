@@ -73,7 +73,10 @@ blocks the cheap recent-list and vice-versa.
 | Concurrent rapid range clicks | `useTransition` already coalesces; ensure the latest `?range=` wins (URL is the single source of truth — already true) |
 | Custom-range apply has no validation feedback | inline validate (from ≤ to) before push (logic already guards server-side) |
 
-This is **UX polish on top of a sound seam** — the URL-as-state design is correct; do not rewrite it.
+This is **UX polish on top of a sound seam**. *(Update — Slice 12C-API / ADR-0013: the dynamic data path
+was subsequently moved to internal `/api/*` routes consumed by client widgets; the URL is now kept in sync
+via `history.replaceState` rather than driving a server navigation. **Initial paint remains
+server-rendered.**)*
 
 ---
 
@@ -87,14 +90,30 @@ This is **UX polish on top of a sound seam** — the URL-as-state design is corr
    session and `parseTranscript`s each just to count turns/messages — on every request, with **no
    SQL-level date filter** (range is applied in memory afterwards), so narrowing the range saves nothing.
 
-**Fix ladder (each a candidate slice; none implemented here):**
+**Fix ladder (each a candidate slice).**
+
+> **✅ Implemented in Slice 12D (2026-06-16, TD-069) — the three _Immediate_ rows below.** Both
+> Dashboard/Analytics and the Chat Monitor list now read `agno_sessions` by
+> **`session_id = ANY($mappedIds)`** (PK, scoped by the derived `agent_id`) instead of a
+> `WHERE agent_id=$1` scan, and the date window is pushed into SQL via the indexed
+> `app_conversations.last_at` (`(tenant_id,last_at desc)`). The **Chat Monitor list** computes
+> turns **purely in SQL** (`jsonb_array_length(runs)`; no `runs` transferred or parsed).
+> **Analytics** still parses the in-range `runs` in memory **because it also needs the
+> de-duped, non-system `messages` count** — so turns ride along that single _required_ parse
+> rather than a redundant SQL call — but it now parses **only the narrowed active/in-range
+> universe**, never every session under the agent. The pure join/filter logic was extracted to
+> `lib/analytics/universe.ts` (TDD: `universe.test.ts`, 9 tests). `db:analytics:verify` confirms
+> **byte-for-byte** parity (conv 4 / turns 30 / messages 85 / tokens 648,405 / cost $0.065330944);
+> perf probe: OLD `agent_id` seq-scan **5 rows** vs NEW PK **4 rows** (both seq-scan at this tiny
+> size; the PK path wins as `ai.agno_sessions` grows). The **Post-deploy** (API split / `<Suspense>`
+> streaming / TTL cache) and **Production-scale** rows remain **proposals** (12C/12G).
 
 | Tier | Change | Why safe / effect |
 |---|---|---|
 | **Immediate** | Query `agno_sessions` by **`session_id = ANY($mappedIds)`** (PK-indexed) instead of `agent_id` scan; the dashboard already holds the mapped `session_id`s in `app_conversations` | avoids R1 entirely; ownership already established at sync; keeps `ai.*` read-only |
 | **Immediate** | Compute turns in SQL via `jsonb_array_length(runs)` (as the chat list already does); only fetch `runs` when message-level counts are actually needed | removes most of R2's parse cost for the common KPI path |
 | **Immediate** | Push the date window into the dashboard side: filter `app_conversations` by `last_at` (indexed `(tenant_id,last_at desc)`) **before** touching `ai.*` | smaller working set per range; smaller `ANY($ids)` |
-| **Post-deploy** | Split Dashboard into `summary` / `timeseries` / `recent` API routes + `<Suspense>` streaming; `revalidate`/cache the summary briefly | parallel, independently-cached widgets; snappier filters |
+| **Post-deploy ✅ (Slice 12C-API / ADR-0013, TD-073)** | Dynamic data moved to internal `GET /api/dashboard` + `GET /api/analytics` consumed by **client widgets** (native `fetch` + keep-previous-data reducer). A **grouped endpoint per surface** (not separate summary/timeseries) avoids double-parsing the aggregate; a server-side TTL/`revalidate` cache was **not** added (deferred). | snappier filters; keep-previous-data + retry; foundation for 12F polling |
 | **Post-deploy** | Short server-side cache (e.g. 15–30s `revalidate` or in-memory TTL) for analytics aggregates | smooths repeated range toggles; still "live enough" for monitoring |
 | **Production-scale** | Dashboard-owned **analytics rollup** table (per tenant/channel/day: conversations, turns, tokens, cost) refreshed by the sync job; or adopt `ai.agno_metrics` **iff** it becomes tenant/channel-scoped | O(days) reads instead of O(sessions·messages); introduce only when live-parse latency is user-visible **and** the contract is stable |
 
@@ -125,6 +144,17 @@ So real-time here means *"freshly observed read state"*, never bi-directional co
   (b) selected transcript tail (new messages — see §6), (c) KPI counters, (d) token/cost as sessions
   update. Cadence is per-surface; all read-only; all respect retention/masking.
 - **No** WebSocket, **no** DB triggers in Phase 1.5.
+
+> **Boundary lock (Slice 12D-B, 2026-06-16).** Whatever the transport — polling, SSE, or a future
+> AI-platform **webhook/DB-trigger** sync — the dashboard only updates its **mapping/metadata/index**
+> (`app_conversations` rows, `last_at`, `status`, identity reuse). It **never** copies
+> `ai.agno_sessions.runs[].messages[]` into `dashboard.*`. The **canonical transcript stays in
+> `ai.agno_sessions.runs`** (ADR-0004); there is **no** `app_conversation_messages` table, **no** message
+> index, and **no** content cache. Grain is fixed: **one Agno `session_id` → one `app_conversations`
+> row**; **one contact (`user_id`) → many sessions → many conversations** sharing the same
+> `external_contact_id` value (no `app_customer_identities` table since 12D-D / ADR-0012). A message
+> index/content cache would require a **new ADR superseding
+> ADR-0004** (tracked as the conditional Slice 12G) and is explicitly **out of scope** here.
 
 ---
 
@@ -196,8 +226,15 @@ transcripts lightly.
 ## 8. Summary of proposed slices (detail in `docs/phases/phase-1-post-acceptance-hardening.md`)
 
 - **12B** cost/token support (splits, cost/day, averages, coverage warning) — read-only.
-- **12C** filter loading UX (per-widget streaming + localized pending) — no DB writes.
-- **12D** performance (query by `session_id` PK, SQL turn counts, date pre-filter, API split/cache) — no DB writes.
+- **12C** filter loading UX — **✅ DONE 2026-06-16 (TD-071)**: localized pending (keep previous data
+  mounted + per-region `aria-busy` dim + spinner on the clicked range + polite "Updating…") on Dashboard
+  + Analytics. **The deferred API split is now also ✅ DONE — Slice 12C-API (TD-073 / ADR-0013):** dynamic
+  data flows through internal `GET /api/dashboard` + `GET /api/analytics` consumed by client widgets
+  (keep-previous-data + localized pending + error/retry); initial paint stays SSR; URL synced via
+  `history.replaceState`. Per-widget `<Suspense>` streaming + a server TTL cache remain deferred. No DB writes.
+- **12D** performance (query by `session_id` PK; SQL `jsonb_array_length` turns on the list; `last_at`
+  date pre-filter) — **✅ DONE 2026-06-16 (TD-069)**. The optional API split / `<Suspense>` streaming /
+  TTL-cache part is **deferred** (overlaps 12C). No DB writes.
 - **12E** WhatsApp-like transcript pagination (`limit`+`before` cursor, scroll anchor, new-msg pill) — no DB writes.
 - **12F** real-time via polling (list/counters), SSE optional — no DB writes.
 - **12G** (production-scale, conditional) analytics rollup table and/or message index — **dashboard-only** writes, needs ADR(s).

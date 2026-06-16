@@ -43,7 +43,9 @@ async function main() {
   console.log(`[analytics:verify] ${maskDbUrl()} (read-only)`);
 
   const now = new Date();
+  const tAnalytics0 = Date.now();
   const data = await getAnalyticsData(getDb(), pool, { rangeKey: "30d", now });
+  const analyticsMs = Date.now() - tAnalytics0;
   console.log(`tenant     : ${data.tenantName}`);
   console.log(`channel    : ${data.channelLabel}`);
   console.log(`timezone   : ${data.timeZone}`);
@@ -108,6 +110,52 @@ async function main() {
   );
   check("series is continuous & non-negative", data.series.length > 0 && data.series.every((p) => p.conversations >= 0 && p.tokens >= 0));
   check("NULL analytics retention is not clamped (unlimited tenant)", data.analyticsRetentionDays === null ? data.clamped === false : true);
+
+  // ---- READ-ONLY performance probe (Slice 12D; informational, no pass/fail) ----
+  // Demonstrates the new read path fetches Agno BY session_id (PK) for the ACTIVE, in-range
+  // universe instead of scanning ai.agno_sessions by agent_id. SELECT/EXPLAIN only.
+  const agentRes = await pool.query<{ agent_id: string }>(
+    `select (t.id::text || ':' || ch.id::text) as agent_id
+       from dashboard.app_tenants t
+       join dashboard.app_channels ch on ch.tenant_id = t.id and ch.channel_key = 'whatsapp-main'
+      where t.slug = 'pepper-st' limit 1`
+  );
+  const agentId = agentRes.rows[0]?.agent_id ?? "";
+  const idsRes = await pool.query<{ agno_session_id: string }>(
+    `select c.agno_session_id
+       from dashboard.app_conversations c
+       join dashboard.app_tenants t  on t.id = c.tenant_id  and t.slug = 'pepper-st'
+       join dashboard.app_channels ch on ch.id = c.channel_id and ch.channel_key = 'whatsapp-main'
+      where c.status <> 'archived' and c.last_at >= $1 and c.last_at < $2`,
+    [data.range.fromISO, data.range.toISO]
+  );
+  const ids = idsRes.rows.map((r) => r.agno_session_id);
+  const RUNS_SELECT = `select session_id, runs,
+            (session_data->'session_metrics'->>'total_tokens') tt,
+            (session_data->'session_metrics'->>'cost') c
+       from ai.agno_sessions`;
+  const oldT0 = Date.now();
+  const oldRes = await pool.query(`${RUNS_SELECT} where agent_id = $1`, [agentId]);
+  const oldMs = Date.now() - oldT0;
+  const newT0 = Date.now();
+  const newRes = ids.length
+    ? await pool.query(`${RUNS_SELECT} where session_id = any($1::text[]) and agent_id = $2`, [ids, agentId])
+    : { rowCount: 0 };
+  const newMs = Date.now() - newT0;
+  const planOf = async (sql: string, params: unknown[]) => {
+    const p = await pool.query<{ "QUERY PLAN": string }>(`explain ${sql}`, params as never[]);
+    return (p.rows[0]?.["QUERY PLAN"] ?? "").trim();
+  };
+  const oldPlan = await planOf(`${RUNS_SELECT} where agent_id = $1`, [agentId]);
+  const newPlan = ids.length
+    ? await planOf(`${RUNS_SELECT} where session_id = any($1::text[]) and agent_id = $2`, [ids, agentId])
+    : "(empty universe)";
+  console.log("\n--- perf probe (read-only; informational) ---");
+  console.log(`getAnalyticsData (30d)     : ${analyticsMs}ms`);
+  console.log(`universe (active, in-range): ${ids.length} session(s) fetched/parsed`);
+  console.log(`OLD  WHERE agent_id        : ${oldMs}ms, rows=${oldRes.rowCount}  | top plan: ${oldPlan}`);
+  console.log(`NEW  session_id = ANY      : ${newMs}ms, rows=${newRes.rowCount}  | top plan: ${newPlan}`);
+  console.log(`note: at this row count the planner may seq-scan both; the PK path wins as ai.agno_sessions grows (no agent_id index).`);
 
   await pool.end();
   console.log(

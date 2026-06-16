@@ -8,6 +8,13 @@
       "when": 1781528114667,
       "tag": "0000_perpetual_james_howlett",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781601480645,
+      "tag": "0001_clumsy_rawhide_kid",
+      "breakpoints": true
     }
   ]
 }

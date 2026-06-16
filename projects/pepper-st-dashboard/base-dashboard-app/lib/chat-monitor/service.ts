@@ -80,15 +80,21 @@ export async function getConversationList(db: Db, pool: Pool): Promise<Conversat
     );
 
   // Cheap turn counts: the DB computes jsonb_array_length(runs); only ints cross the wire.
-  const turnRows = await pool.query<{ session_id: string; turns: number | string | null }>(
-    `select session_id,
-            jsonb_array_length(
-              case when jsonb_typeof(runs::jsonb) = 'array' then runs::jsonb else '[]'::jsonb end
-            ) as turns
-       from ai.agno_sessions
-      where agent_id = $1`,
-    [agentId]
-  );
+  // Slice 12D: fetch BY `session_id` (PK) for THIS universe, not a `WHERE agent_id = $1`
+  // sequential scan. `agent_id` is retained as a defensive scope filter (mapping parity).
+  const sessionIds = [...new Set(conversations.map((c) => c.agnoSessionId).filter(Boolean))];
+  const turnRows = sessionIds.length
+    ? await pool.query<{ session_id: string; turns: number | string | null }>(
+        `select session_id,
+                jsonb_array_length(
+                  case when jsonb_typeof(runs::jsonb) = 'array' then runs::jsonb else '[]'::jsonb end
+                ) as turns
+           from ai.agno_sessions
+          where session_id = any($1::text[])
+            and agent_id = $2`,
+        [sessionIds, agentId]
+      )
+    : { rows: [] as { session_id: string; turns: number | string | null }[] };
   const turnsBySession = new Map(turnRows.rows.map((r) => [String(r.session_id), Number(r.turns) || 0]));
   const turnCountById = new Map(
     conversations.map((c) => [c.id, turnsBySession.get(c.agnoSessionId) ?? 0])

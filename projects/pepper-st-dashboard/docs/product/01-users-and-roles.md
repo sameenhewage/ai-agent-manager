@@ -13,8 +13,12 @@
 ### End Customer (external, not a dashboard user)
 The person chatting with the tenant's bot on WhatsApp (the AI, or — after a
 Phase 2 handover — a human operator). They never log into the
-dashboard. Represented by `app_customers` + `app_customer_identities`. The
-dashboard usually knows only their **External Contact ID** (phone), shown masked.
+dashboard. The dashboard stores their contact **by value** as
+`app_conversations.external_contact_id` and usually knows only this **External
+Contact ID** (phone), shown masked. The AI platform owns the contact registry
+(`ai.agno_sessions.user_id` / `ai.customers`); the dashboard's old
+`app_customers` / `app_customer_identities` tables were **removed in Slice 12D-D**
+(ADR-0012).
 
 ### Tenant Operator (primary Phase 1 user)
 A staff member of the business (e.g. PEPPER ST.) who monitors conversations and

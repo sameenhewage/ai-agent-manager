@@ -16,13 +16,14 @@ function loadDotEnv() {
 const EXPECTED_TABLES = [
   "app_channels",
   "app_conversations",
-  "app_customer_identities",
-  "app_customers",
   "app_tenant_entitlements",
   "app_tenants",
 ];
 
 const FORBIDDEN_TABLES = [
+  // Removed in Slice 12D-D / ADR-0012 — dashboard owns no customer/contact model.
+  "app_customers",
+  "app_customer_identities",
   "app_conversation_messages",
   "app_analytics_daily",
   "app_subscription_limits",
@@ -52,8 +53,8 @@ async function main() {
   );
   const tables: string[] = tablesRes.rows.map((r) => r.table_name);
   check(
-    "exactly the 6 expected dashboard tables exist",
-    tables.length === 6 && EXPECTED_TABLES.every((t) => tables.includes(t)),
+    "exactly the 4 expected dashboard tables exist (no customer/identity model — ADR-0012)",
+    tables.length === 4 && EXPECTED_TABLES.every((t) => tables.includes(t)),
     tables.join(", ") || "none"
   );
 

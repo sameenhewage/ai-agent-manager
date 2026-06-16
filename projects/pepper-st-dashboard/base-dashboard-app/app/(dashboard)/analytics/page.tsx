@@ -61,7 +61,7 @@ export default async function AnalyticsPage({
           reachable, then refresh. The upstream Agno data is never modified.
         </EmptyState>
       ) : (
-        <Analytics data={data} />
+        <Analytics initialData={{ analytics: data }} initialSelection={{ key, customFrom, customTo }} />
       )}
     </>
   );

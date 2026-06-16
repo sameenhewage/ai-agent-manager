@@ -16,12 +16,65 @@
   re-analysis (vs the Jun-15 `ai`-only `pg_dump`) + product-behaviour gap review: DB + mapping logic
   re-verified live, **no migration warranted**; found scale risks (no `agent_id` index on
   `ai.agno_sessions`; per-request full-`runs` parse) and product gaps (cost/token depth, filter
-  responsiveness, real-time, WhatsApp-like chat paging). Hardening roadmap **12A–12G drafted, NOT
-  implemented**. **Deploy data-blocker cleared**; revisit deploy after the perf/real-time hardening
-  slices. Parser intact. See `docs/database/07-old-vs-current-db-comparison.md`,
+  responsiveness, real-time, WhatsApp-like chat paging). Hardening roadmap **12A–12G drafted**.
+  **Slice 12D (read-path performance) EXECUTED** (2026-06-16, TD-069): read `ai.agno_sessions` by
+  **`session_id` PK** (`= ANY($mappedIds)`, scoped by derived `agent_id`) instead of an `agent_id`
+  seq-scan, push the date window into SQL via the indexed `app_conversations.last_at`, and compute
+  Chat-list turns via SQL `jsonb_array_length` (Analytics keeps the parse only because it also needs
+  the de-duped non-system `messages` count, now over the narrowed in-range universe). **No DB writes,
+  no migration, `ai.*` untouched, displayed numbers unchanged**; exact metric parity, all verifiers +
+  browser smoke green. **Slice 12D-B COMPLETE** (2026-06-16, TD-070): read-only **Agno transcript
+  boundary** audit — **all 12 goals PASS, no bug**. Locked that messages stay canonical in
+  `ai.agno_sessions.runs`, `dashboard.*` is index/metadata only (no `app_conversation_messages` / message
+  index / content cache), **one Agno `session_id` → one conversation**, **one contact → many sessions →
+  many conversations** (one identity), future webhook/trigger sync = metadata-only. Added 3 schema grain
+  lock-tests → **126/126**; no production code changed. **Slice 12C COMPLETE** (2026-06-16, TD-071):
+  **filter/loading UX polish (UI-only)** — range/filter clicks now keep previous KPI/chart/recent data
+  mounted while the server recomputes, dim each region with `aria-busy`, show a spinner on the clicked
+  range, soft-disable all buttons, and announce a polite "Updating…" badge; applied to **both** Dashboard
+  and Analytics (Analytics keeps its panel-bar toolbar + custom range — only the loading language was
+  unified, no toolbar redesign). Built on a pure `lib/dashboard/range-toolbar.ts` helper (9 TDD tests) +
+  reusable `Spinner`/`PendingSection`/shared `RangeToolbar`. **No DB writes, no migration, `ai.*`
+  untouched, no new metrics, URL-as-state unchanged**; per-widget `<Suspense>` streaming + API split
+  **deferred** (overlaps 12D). `typecheck` clean, **135/135** tests, `next build` green, all 4 read-only
+  verifiers + reconfirm PASS (parity exact), browser smoke green (masked, no id leaks, no console errors).
+  **Slice 12D-D COMPLETE** (2026-06-16, TD-072 / ADR-0012): **dashboard v2 schema simplification** — dropped
+  the duplicate, unused customer/identity model (`app_customers` + `app_customer_identities` tables and
+  `app_conversations.customer_id`/`customer_identity_id`); the contact now lives **only** as
+  `app_conversations.external_contact_id` (TEXT NOT NULL, indexed **not** unique). **The dashboard now owns
+  exactly 4 tables** (`app_tenants`, `app_channels`, `app_conversations`, `app_tenant_entitlements`).
+  Migration `0001` **APPLIED to the live DB** (product-approved; full backup
+  `backups/2026-06-16-dashboard-pre-12dd.sql` taken; raw PII dumps gitignored); `ai.*` untouched; grain +
+  transcript boundary (ADR-0004) + masking (ADR-0005) unchanged; sync does one upsert per Agno session (no
+  find-or-create). `typecheck` clean, **138/138** tests, `build` green; all 4 read-only verifiers +
+  reconfirm PASS (parity exact: conv 4 / turns 38 / messages 110 / tokens 828,005 / cost $0.077716308);
+  browser smoke green (masked, **no raw phone/session leak** in HTML or API payloads).
+  **Slice 12C-API COMPLETE** (2026-06-16, TD-073 / ADR-0013): **API-driven Dashboard/Analytics data
+  loading** — completed the deferred half of Slice 12C. Dynamic data now flows through internal
+  `GET /api/dashboard` + `GET /api/analytics` route handlers consumed by **client widgets** (native
+  `fetch` + a pure `async-data` reducer): **initial paint stays SSR** (real-data-first, deep-link), each
+  range/custom change refetches on the client, **keeps the previous data visible** with localized pending
+  + user-safe **error/retry**, and syncs the URL via `history.replaceState`. Routes are a **thin HTTP
+  boundary** over the existing services (no SQL in handlers); **client never sends tenant/channel**
+  (server-resolved; injected ids ignored); **safe masked DTOs only** (whitelisted recent items — no raw
+  `external_contact_id`/`agno_session_id`, no `customer_id`/`customer_identity_id`); bad/incomplete-custom
+  ranges → **400**. **No schema/DB/`ai.*` writes, no migration; 4-table schema intact; no realtime/polling;
+  real metrics unchanged.** `typecheck` clean, **159/159** tests (21 new), `build` green; all 4 verifiers +
+  reconfirm PASS (parity exact: conv 4 / turns 44 / tokens 1,010,101 / cost $0.097590316); browser smoke
+  green (range→API fetch, URL sync, prev data stays, no PII leaks, no console errors).
+  **12A/12B/12E/12F/12G remain NOT implemented** (approval-gated). **Deploy data-blocker cleared**;
+  revisit deploy after the remaining perf/real-time slices. Parser intact. See
+  `docs/database/07-old-vs-current-db-comparison.md`,
   `docs/architecture/08-dashboard-data-loading-and-realtime-strategy.md`,
   `docs/product/05-dashboard-analytics-chat-gaps.md`,
-  `docs/phases/phase-1-post-acceptance-hardening.md`, ADR-0011; deploy docs `docs/deployment/`.
+  `docs/phases/phase-1-post-acceptance-hardening.md`,
+  `docs/handoff/2026-06-16-slice-12c-dashboard-analytics-loading-ux.md`,
+  `docs/handoff/2026-06-16-slice-12d-b-agno-transcript-boundary-review.md`,
+  `docs/handoff/2026-06-16-slice-12d-perf-refactor.md`,
+  `docs/handoff/2026-06-16-slice-12d-d-schema-simplification.md`,
+  `docs/database/08-dashboard-v2-schema-simplification.md`,
+  `docs/handoff/2026-06-16-slice-12c-api-driven-filter-loading-ux.md`,
+  ADR-0011/**ADR-0012**/**ADR-0013**; deploy docs `docs/deployment/`.
 - **Stack (locked):** Next.js + TypeScript + Tailwind + **shadcn/ui** (restyled to
   match the demo UI) + **Drizzle ORM** + PostgreSQL + **Zod**. Migrations via
   **Drizzle**; raw `pg` only as Drizzle's driver. See `docs/architecture/05-tech-stack.md`.
@@ -82,21 +135,26 @@ matching it against `ai.agno_sessions.agent_id`. `source_agent_id` is an optiona
 the v1 literal `concierge` is obsolete.
 
 ### Customer (end customer)
-A **person who chats with the tenant's bot** — tenant-scoped. Stored in
-`app_customers`. The dashboard rarely knows a real name (Agno has none), so
-`display_name` is nullable.
+A **person who chats with the tenant's bot**. The **registry is AI-owned**
+(`ai.customers` / `ai.agno_sessions.user_id`) — the dashboard's old `app_customers`
+table was **removed in Slice 12D-D (ADR-0012)** and is **not** reintroduced; the
+dashboard identifies a contact only by the masked `external_contact_id` value on
+`app_conversations`.
 
-### Customer Identity
-The link between a **Customer** and an **external contact id on a channel**.
-Stored in `app_customer_identities` as `(channel, external_contact_id)`.
-In Phase 1, `external_contact_id` is the **WhatsApp phone number**.
+### Customer Identity *(removed — historical)*
+The v1 link between a Customer and an external contact id on a channel. The
+`app_customer_identities` table was **removed in Slice 12D-D (ADR-0012)**; there is
+**no dashboard-side identity table**. The external contact id now lives **by value**
+on `app_conversations.external_contact_id` (one value may appear in many
+conversations); the contact registry is AI-owned.
 
 ### Conversation
 The dashboard's **mapping record** for one Agno session. Stored in
 `app_conversations`. **Grain: one `ai.agno_sessions` row (keyed by the opaque
 `session_id`) = one Conversation;** a single contact (`user_id`) may own **many** sessions
-(1 identity : N conversations). It holds `agno_session_id` (the link to Agno),
-`customer_identity_id` (the exact identity resolved during mapping), and cached
+(one contact : N conversations). It holds `agno_session_id` (the link to Agno),
+`external_contact_id` (the masked contact, stored **by value** — no
+`customer_id`/`customer_identity_id` since ADR-0012), and cached
 timing (`first_at`, `last_at`) — **never** message bodies. Dashboard-owned
 `status` is one of `open`/`resolved`/`archived` (CHECK-constrained), and
 `updated_at` is bumped when mapping refreshes `last_at`/`status`. Uniqueness is
@@ -133,9 +191,10 @@ Real usage data from `session_data.session_metrics`
 `cache_read_tokens`, `cost`). The only reliable "usage" signal available today.
 
 ### External Contact ID
-The contact's id on a channel: the WhatsApp phone (text), now sourced from
-**`ai.agno_sessions.user_id`**. Stored on `app_customer_identities` and cached on
-`app_conversations`. **Never stored as a number; never assumed to start with `94`; always masked.**
+The contact's id on a channel: the WhatsApp phone (text), sourced from
+**`ai.agno_sessions.user_id`**. Stored **by value** on
+`app_conversations.external_contact_id` (TEXT, NOT NULL, indexed **not** unique — no
+separate identity table since ADR-0012). **Never stored as a number; never assumed to start with `94`; always masked.**
 
 ### Agno Session ID
 The value linking `app_conversations` → `ai.agno_sessions.session_id` (the opaque 32-char token).

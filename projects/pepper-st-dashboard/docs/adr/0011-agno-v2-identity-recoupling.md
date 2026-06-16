@@ -1,6 +1,7 @@
 # ADR-0011 — Re-coupling to the migrated Agno (v2) identity model
 
 - **Status:** **Accepted** (Gate 11A; AI-dev contract **confirmed** + live-verified 2026-06-16 — `agent_id = "<tenant_id>:<channel_id>"`). Code re-alignment proceeds under **Slice 11B**; the dashboard-only **data writes** (orphan cleanup + re-sync) remain **product-approval-gated**.
+- **Superseded in part by ADR-0012 (2026-06-16):** the Gate-11A verdict that "**no dashboard schema migration is required**" and the retention of `app_customers` / `app_customer_identities` **no longer hold** — Slice 12D-D **dropped** that customer/identity model. The contact now lives by value on `app_conversations.external_contact_id`. The **derived-`agent_id`**, by-value, and read-only decisions below remain fully in force.
 - **Date:** 2026-06-16
 - **Related:** ADR-0001 (read-and-organize, by-value link), ADR-0003 (session mapping), ADR-0005
   (phone masking), ADR-0008 (future tenant/source contract), `docs/database/01..05`.
@@ -64,7 +65,7 @@ Gate 11A completed the design and **confirms NO dashboard schema migration is re
 
 - agent key = **derived** `${tenant_id}:${channel_id}` in the mapping seam (`source_agent_id` demoted to derived/legacy cache),
 - `app_conversations.agno_session_id` ← opaque `session_id` (no change),
-- `app_customer_identities.external_contact_id` ← contact `user_id` (derivation source change only).
+- `app_customer_identities.external_contact_id` ← contact `user_id` (derivation source change only). **[Superseded by ADR-0012: `app_customer_identities` was dropped in Slice 12D-D; the contact now lives on `app_conversations.external_contact_id`.]**
 
 Re-alignment is therefore a **logic + config** change behind the existing mapping seam (consolidate the
 v2 contract into `lib/agno/mapping.ts`; 11-point change set), plus a dashboard-only orphan cleanup +

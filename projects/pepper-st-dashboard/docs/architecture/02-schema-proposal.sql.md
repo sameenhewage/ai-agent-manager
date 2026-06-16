@@ -8,6 +8,14 @@
   `base-dashboard-app/lib/db/schema.ts`; migration `0000` **generated, not applied**.
   Parity table + Gate 2 package: `migration-proposal-0000.md`.
 
+> **⚠ SUPERSEDED (2026-06-16) — Slice 12D-D / ADR-0012.** This proposal defines the original **6-table**
+> schema **including** `app_customers` and `app_customer_identities` (and `app_conversations.customer_id` /
+> `customer_identity_id`). Those were **dropped** in Slice 12D-D — **the live schema now has 4 tables**
+> (`app_tenants`, `app_channels`, `app_conversations`, `app_tenant_entitlements`); the contact lives **by
+> value** on `app_conversations.external_contact_id`. The SQL below is **historical**; the current schema
+> is `base-dashboard-app/lib/db/schema.ts` and the contract is `docs/database/03-dashboard-data-contract.md`.
+> **Do not** recreate the customer/identity tables.
+
 > ## ⛔ DO NOT APPLY
 > This SQL is a **reviewable proposal**. It has **not** been run. No `dashboard`
 > schema or `app_*` table exists yet. Applying it requires a **separate explicit

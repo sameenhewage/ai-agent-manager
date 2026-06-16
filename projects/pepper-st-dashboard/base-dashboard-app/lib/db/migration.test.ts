@@ -15,11 +15,12 @@ const sql = sqlFiles
   .map((f) => readFileSync(join(drizzleDir, f), "utf8"))
   .join("\n");
 
+// The tables the dashboard KEEPS (Slice 12D-D / ADR-0012). The baseline 0000 migration still
+// CREATEs the historical app_customers/app_customer_identities; the later simplification migration
+// DROPs them (asserted separately below), so this list is the kept set, not "never mentioned".
 const ALLOWED = [
   "app_tenants",
   "app_channels",
-  "app_customers",
-  "app_customer_identities",
   "app_conversations",
   "app_tenant_entitlements",
 ];
@@ -49,7 +50,7 @@ describe("generated migration SQL", () => {
     expect(sql).toContain('CREATE SCHEMA "dashboard"');
   });
 
-  it("creates all six allowed tables in the dashboard schema", () => {
+  it("creates the kept dashboard tables in the dashboard schema", () => {
     for (const t of ALLOWED) {
       expect(sql).toContain(`"dashboard"."${t}"`);
     }
@@ -112,5 +113,26 @@ describe("generated migration SQL", () => {
 
   it("applies nothing — DDL only, no seed/INSERT", () => {
     expect(sql).not.toMatch(/INSERT\s+INTO/i);
+  });
+});
+
+// Slice 12D-D / ADR-0012 — the dashboard drops its duplicate customer/identity model. These
+// assertions read the FULL set of generated migrations, so they prove the drop migration exists.
+describe("dashboard v2 schema simplification migration (ADR-0012)", () => {
+  it("drops the app_customers and app_customer_identities tables", () => {
+    expect(sql).toMatch(/drop table[^;]*"app_customers"/i);
+    expect(sql).toMatch(/drop table[^;]*"app_customer_identities"/i);
+  });
+
+  it("drops customer_id and customer_identity_id from app_conversations", () => {
+    expect(sql).toMatch(/alter table[^;]*"app_conversations"[^;]*drop column[^;]*"customer_id"/i);
+    expect(sql).toMatch(
+      /alter table[^;]*"app_conversations"[^;]*drop column[^;]*"customer_identity_id"/i
+    );
+  });
+
+  it("still never touches ai.* (the drop migration is dashboard-only)", () => {
+    expect(sql).not.toContain('"ai"');
+    expect(sql).not.toMatch(/\bai\.[a-z_]/i);
   });
 });

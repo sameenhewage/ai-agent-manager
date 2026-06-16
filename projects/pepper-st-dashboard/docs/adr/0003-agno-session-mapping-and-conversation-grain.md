@@ -47,3 +47,40 @@ dashboard "conversation" maps to this.
   rule (time-gap heuristic). Parked to roadmap to avoid premature complexity.
 - **FK to `ai.agno_sessions`**: rejected — would couple/own Agno data; violates the
   read-only boundary.
+
+## Update — Slice 12D-B (2026-06-16): Agno v2 reaffirmation
+
+The **grain decision stands**: **one `ai.agno_sessions` row (one `session_id`) = one
+`app_conversations` row.** But this ADR's *Context*/*Consequences* described the **v1** world and is
+**superseded by ADR-0011 (Agno v2)** on these points:
+
+- `session_id` is **no longer the phone** — it is an **opaque 32-char token**; the WhatsApp phone is now
+  `ai.agno_sessions.user_id` (PII). `app_conversations.agno_session_id` links by value to that opaque
+  token; `external_contact_id` is the phone.
+- A returning customer does **NOT** reuse the same session row. The AI platform creates a **new**
+  `session_id` for the new conversation. Therefore **one contact (`user_id`) → many Agno sessions → many
+  `app_conversations` rows**, all sharing **one** `app_customer_identities` row
+  (`(tenant_id, channel_id, external_contact_id)`).
+  - Conversation uniqueness stays `(tenant_id, channel_id, agno_session_id)` → never merge sessions.
+  - `external_contact_id` is **indexed, not unique** (Decision §3 already anticipated this divergence).
+  - "Returning customer" is detected by reusing the identity across sessions, **not** by a reused
+    session row.
+- §6 "Demo binding (`agent_id='concierge'`)" is superseded: `agent_id` is **derived**
+  `"<tenant_id>:<channel_id>"` (ADR-0011).
+- **Transcript boundary unchanged (ADR-0004):** message bodies stay canonical in
+  `ai.agno_sessions.runs[].messages[]`. The dashboard stores **no** message content, has **no**
+  `app_conversation_messages` table / message index / content cache, and any future webhook/trigger sync
+  updates **mapping/metadata/index only** — it never copies messages. Verified by `schema.test.ts`
+  (FORBIDDEN tables + the grain lock-tests) and the read-only verifiers.
+
+## Update — Slice 12D-D (2026-06-16): identity model removed (ADR-0012)
+
+The **grain decision still stands** (one Agno `session_id` = one `app_conversations` row, unique on
+`(tenant_id, channel_id, agno_session_id)`). But Decision **§4** ("a conversation also stores
+`customer_identity_id`") and every reference to `customer_id` are **superseded by ADR-0012**:
+`dashboard.app_customers` and `dashboard.app_customer_identities` were **dropped**, along with
+`app_conversations.customer_id` / `customer_identity_id`. The contact now lives **only** as
+`app_conversations.external_contact_id` (TEXT, NOT NULL, **indexed not unique**) — the AI platform
+(`ai.agno_sessions.user_id` / `ai.customers`) is the contact registry of record. "Returning vs new
+contact" is derived from `external_contact_id` over `app_conversations`, not from an identity row. The
+transcript boundary (ADR-0004) and the by-value/read-only link are unchanged.

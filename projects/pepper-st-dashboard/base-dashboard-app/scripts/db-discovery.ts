@@ -208,8 +208,6 @@ async function main() {
     "C1 dashboard row counts",
     `select 'app_tenants' tbl, count(*)::int n from dashboard.app_tenants
       union all select 'app_channels', count(*) from dashboard.app_channels
-      union all select 'app_customers', count(*) from dashboard.app_customers
-      union all select 'app_customer_identities', count(*) from dashboard.app_customer_identities
       union all select 'app_conversations', count(*) from dashboard.app_conversations
       union all select 'app_tenant_entitlements', count(*) from dashboard.app_tenant_entitlements
       order by 1`

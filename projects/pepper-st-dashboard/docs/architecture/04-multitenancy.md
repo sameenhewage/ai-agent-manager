@@ -22,14 +22,15 @@ tenant-scoped dashboard**.
 Rationale: simplest correct model for many small tenants; avoids schema sprawl;
 keeps onboarding to inserting rows, not running DDL.
 
-## Tenant → channel → customer → conversation
+## Tenant → channel → conversation
 
 ```
 app_tenants (PEPPER ST.; status=active, onboarding_status=complete, timezone=Asia/Colombo)
   └─ app_channels (WhatsApp; channel_key=whatsapp-main; source_agent_id=concierge, external_phone_number_id=…)
-       └─ app_customer_identities (channel + external_contact_id=phone)
-            └─ app_customers (tenant-scoped person)
-                 └─ app_conversations (agno_session_id → ai.agno_sessions)
+       └─ app_conversations (agno_session_id → ai.agno_sessions;
+                              external_contact_id = contact phone, by value, masked)
+
+  (No app_customers / app_customer_identities — removed in 12D-D / ADR-0012.)
 ```
 
 - A tenant is **not** a session and **not** a customer.

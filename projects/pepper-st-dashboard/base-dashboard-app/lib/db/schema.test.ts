@@ -12,13 +12,16 @@ import * as schema from "./schema";
 const ALLOWED = [
   "app_channels",
   "app_conversations",
-  "app_customer_identities",
-  "app_customers",
   "app_tenant_entitlements",
   "app_tenants",
 ];
 
 const FORBIDDEN = [
+  // Removed in Slice 12D-D / ADR-0012 — the dashboard no longer owns a customer/contact model;
+  // ai.customers is the AI-platform contact registry, and external_contact_id lives on the
+  // conversation index directly.
+  "app_customers",
+  "app_customer_identities",
   "app_conversation_messages",
   "app_analytics_daily",
   "app_subscription_limits",
@@ -60,7 +63,7 @@ function uniqueSets(tableName: string) {
 }
 
 describe("dashboard schema — table set", () => {
-  it("defines exactly the six allowed tables", () => {
+  it("defines exactly the four allowed tables (no customer/identity model — ADR-0012)", () => {
     expect([...byName.keys()].sort()).toEqual(ALLOWED);
   });
 
@@ -103,41 +106,28 @@ describe("app_channels", () => {
   });
 });
 
-describe("app_customer_identities", () => {
-  it("uniquely maps tenant_id + channel_id + external_contact_id", () => {
-    const sets = uniqueSets("app_customer_identities");
-    expect(sets).toContain(
-      ["tenant_id", "channel_id", "external_contact_id"].sort().join(",")
-    );
-  });
-
-  it("external_contact_id is text (no numeric phone assumption)", () => {
-    expect(column("app_customer_identities", "external_contact_id").getSQLType()).toBe(
-      "text"
-    );
-  });
-});
-
 describe("app_conversations", () => {
-  it("links tenant, customer, customer_identity and channel by FK", () => {
+  it("links ONLY tenant + channel by FK — the dashboard no longer owns a customer/identity model (ADR-0012)", () => {
     const c = table("app_conversations");
     const refTables = c.foreignKeys
       .map((fk) => getTableConfig(fk.reference().foreignTable).name)
       .sort();
-    expect(refTables).toEqual([
-      "app_channels",
-      "app_customer_identities",
-      "app_customers",
-      "app_tenants",
-    ]);
-    for (const name of [
-      "tenant_id",
-      "customer_id",
-      "customer_identity_id",
-      "channel_id",
-    ]) {
+    expect(refTables).toEqual(["app_channels", "app_tenants"]);
+    for (const name of ["tenant_id", "channel_id"]) {
       expect(column("app_conversations", name).notNull).toBe(true);
     }
+  });
+
+  it("does NOT carry customer_id / customer_identity_id columns (no duplicate CRM/contact model — ADR-0012)", () => {
+    const cols = table("app_conversations").columns.map((col) => col.name);
+    expect(cols).not.toContain("customer_id");
+    expect(cols).not.toContain("customer_identity_id");
+  });
+
+  it("keeps external_contact_id directly on the conversation (text, NOT NULL — the masked-contact source)", () => {
+    const col = column("app_conversations", "external_contact_id");
+    expect(col.getSQLType()).toBe("text");
+    expect(col.notNull).toBe(true);
   });
 
   it("stores agno_session_id as text with NO foreign key into ai.*", () => {
@@ -156,6 +146,26 @@ describe("app_conversations", () => {
     const status = column("app_conversations", "status");
     expect(status.notNull).toBe(true);
     expect(status.default).toBe("open");
+  });
+
+  // Slice 12D-B — lock the conversation GRAIN (the Agno-transcript boundary):
+  // one Agno session => exactly one conversation; one contact => MANY conversations.
+  it("is unique on (tenant_id, channel_id, agno_session_id) — exactly ONE conversation per Agno session (no session merging)", () => {
+    expect(uniqueSets("app_conversations")).toContain(
+      ["tenant_id", "channel_id", "agno_session_id"].sort().join(",")
+    );
+  });
+
+  it("does NOT make external_contact_id unique — the same contact/mobile may own MANY conversations (one per Agno session)", () => {
+    const sets = uniqueSets("app_conversations");
+    expect(sets.some((s) => s.split(",").includes("external_contact_id"))).toBe(false);
+  });
+
+  it("stores NO transcript/message content (canonical transcript stays in ai.agno_sessions.runs — ADR-0004)", () => {
+    const cols = table("app_conversations").columns.map((c) => c.name);
+    const forbidden = /(^|_)(runs?|messages?|content|body|transcript|text)(_|$)/i;
+    const offenders = cols.filter((name) => forbidden.test(name));
+    expect(offenders).toEqual([]);
   });
 });
 

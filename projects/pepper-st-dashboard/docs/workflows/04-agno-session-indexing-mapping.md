@@ -1,13 +1,14 @@
 # Workflow 04 — Agno Session Indexing / Mapping
 
 - **Status:** Phase 1 (docs-first)
-- **Last updated:** 2026-06-15
-- **Related:** Workflow 02, ADR-0003, ADR-0008
+- **Last updated:** 2026-06-16
+- **Related:** Workflow 02, ADR-0003, ADR-0008, **ADR-0012**
 
 ## Goal
 
-Keep `dashboard.app_conversations` (and the customer/identity rows) **in sync as
-an index** over the tenant's `ai.agno_sessions` rows — without copying transcripts
+Keep `dashboard.app_conversations` **in sync as
+an index** over the tenant's `ai.agno_sessions` rows (the contact is stored by
+value as `external_contact_id` — no customer/identity rows, ADR-0012) — without copying transcripts
 and without mutating Agno.
 
 ## Why an index at all (if we read live)?
@@ -25,8 +26,8 @@ For a given tenant + channel (e.g. PEPPER ST. / `concierge`):
 1. **Select candidate Agno sessions** (read-only) for an **active** channel
    (`is_active = true`): rows where `agent_id` matches the channel's
    `source_agent_id` (Phase 1 rule).
-2. For each session, run **Workflow 02** find-or-create (customer, identity,
-   conversation) — which enforces the **active, exactly-one** channel resolution
+2. For each session, run **Workflow 02** find-or-create (**conversation only** — no
+   customer/identity model, ADR-0012) — which enforces the **active, exactly-one** channel resolution
    (0 → unmapped, >1 → ambiguous + masked warning; never guess a tenant).
 3. **Refresh** `app_conversations.last_at = to_timestamp(updated_at)` and
    `first_at = to_timestamp(created_at)`; **bump `updated_at`**.
@@ -43,8 +44,8 @@ For a given tenant + channel (e.g. PEPPER ST. / `concierge`):
 ## Indexing fields
 
 - Unique: `(tenant_id, channel_id, agno_session_id)` **only** (conversation identity).
-- Non-unique indexes: `(tenant_id, channel_id, external_contact_id)` (contact lookup;
-  a contact may have several conversations — ADR-0008) and `customer_identity_id`.
+- Non-unique index: `(tenant_id, channel_id, external_contact_id)` (contact lookup;
+  a contact may have several conversations — ADR-0008/0012).
 - Order index: `(tenant_id, last_at DESC)` for the conversation list.
 
 ## Hard rules

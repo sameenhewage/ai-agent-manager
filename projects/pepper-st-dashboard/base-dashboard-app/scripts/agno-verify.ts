@@ -14,6 +14,10 @@ function loadDotEnv() {
 }
 
 const FORBIDDEN_TABLES = [
+  // Removed in Slice 12D-D / ADR-0012 — the dashboard owns no customer/contact model;
+  // ai.customers is the AI-platform registry and external_contact_id lives on the conversation.
+  "app_customers",
+  "app_customer_identities",
   "app_conversation_messages",
   "app_analytics_daily",
   "app_plans",
@@ -43,28 +47,28 @@ async function main() {
   );
   check("whatsapp-main channel exists exactly once", channel.rows[0].n === 1);
 
-  const conv = await pool.query<{ n: number }>(
-    "select count(*)::int n from dashboard.app_conversations c join dashboard.app_tenants t on t.id = c.tenant_id where t.slug = 'pepper-st'"
-  );
-  const customers = await pool.query<{ n: number }>(
-    "select count(*)::int n from dashboard.app_customers c join dashboard.app_tenants t on t.id = c.tenant_id where t.slug = 'pepper-st'"
-  );
-  const identities = await pool.query<{ n: number }>(
-    "select count(*)::int n from dashboard.app_customer_identities i join dashboard.app_tenants t on t.id = i.tenant_id where t.slug = 'pepper-st'"
+  const conv = await pool.query<{ n: number; contacts: number; null_contacts: number }>(
+    `select count(*)::int n,
+            count(distinct c.external_contact_id)::int contacts,
+            count(*) filter (where c.external_contact_id is null)::int null_contacts
+       from dashboard.app_conversations c
+       join dashboard.app_tenants t on t.id = c.tenant_id
+      where t.slug = 'pepper-st'`
   );
   console.log(`conversations synced : ${conv.rows[0].n}`);
-  console.log(`customers synced     : ${customers.rows[0].n}`);
-  console.log(`identities synced    : ${identities.rows[0].n}`);
-  // v2 is 1 identity : N conversations (a contact/user_id may own many sessions), so the strict v1
-  // 1:1 invariant no longer holds. Every conversation must still resolve to an identity.
+  console.log(`distinct contacts    : ${conv.rows[0].contacts} (one contact may own many conversations)`);
+  // ADR-0012: the dashboard owns NO customer/identity table. The contact is stored by value on the
+  // conversation; many conversations may share one external_contact_id (one contact => N sessions).
   check(
-    "1 identity : N conversations (identities <= conversations, customers <= identities)",
-    identities.rows[0].n <= conv.rows[0].n && customers.rows[0].n <= identities.rows[0].n
+    "every conversation carries a non-null external_contact_id (the masked-contact source — ADR-0012)",
+    conv.rows[0].null_contacts === 0,
+    `null_contacts=${conv.rows[0].null_contacts}`
   );
-  const nullIdentity = await pool.query<{ n: number }>(
-    "select count(*)::int n from dashboard.app_conversations c join dashboard.app_tenants t on t.id = c.tenant_id where t.slug = 'pepper-st' and c.customer_identity_id is null"
+  check(
+    "distinct contacts <= conversations (same contact may own many conversations; no 1:1 CRM model)",
+    conv.rows[0].contacts <= conv.rows[0].n,
+    `contacts=${conv.rows[0].contacts} conversations=${conv.rows[0].n}`
   );
-  check("no conversation is missing its customer_identity_id", nullIdentity.rows[0].n === 0);
 
   // ---- v2 live-coverage: agent_id is DERIVED "<tenant_id>:<channel_id>" (computed in SQL). This
   // catches the Gate 10 drift that the old structural checks PASSED right through. ----
@@ -118,10 +122,15 @@ async function main() {
     "select table_name from information_schema.tables where table_schema = 'dashboard' order by table_name"
   );
   const names: string[] = tables.rows.map((r) => r.table_name);
-  check("dashboard still has exactly 6 tables", names.length === 6, names.join(", "));
   check(
-    "no forbidden / transcript-message tables exist",
-    names.every((n) => !FORBIDDEN_TABLES.includes(n))
+    "dashboard has exactly 4 tables (app_tenants, app_channels, app_conversations, app_tenant_entitlements — ADR-0012)",
+    names.length === 4,
+    names.join(", ")
+  );
+  check(
+    "no forbidden tables exist (incl. the removed app_customers / app_customer_identities)",
+    names.every((n) => !FORBIDDEN_TABLES.includes(n)),
+    names.filter((n) => FORBIDDEN_TABLES.includes(n)).join(", ") || "none"
   );
 
   const aiLeak = await pool.query<{ n: number }>(

@@ -2,12 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import * as schema from "../db/schema";
-import {
-  appChannels,
-  appConversations,
-  appCustomerIdentities,
-  appCustomers,
-} from "../db/schema";
+import { appChannels, appConversations } from "../db/schema";
 import type { AgnoSession } from "./types";
 import {
   buildConversationValues,
@@ -18,10 +13,12 @@ import {
 } from "./mapping";
 
 /**
- * Agno -> dashboard mapping sync (Slice 4). Reads `ai.agno_sessions` READ-ONLY and
- * upserts ONLY dashboard-owned mapping rows (customers, identities, conversations).
- * Idempotent: re-running creates no duplicates (composite unique constraints +
- * find-or-create). Never writes/alters `ai.*`; never stores transcript messages.
+ * Agno -> dashboard mapping sync (Slice 4; simplified in Slice 12D-D / ADR-0012). Reads
+ * `ai.agno_sessions` READ-ONLY and upserts ONLY the dashboard-owned conversation index
+ * (one row per Agno session). The dashboard keeps NO customer/identity table — the contact
+ * is stored by value on `app_conversations.external_contact_id`. Idempotent: re-running
+ * creates no duplicates (composite unique on tenant+channel+agno_session_id). Never
+ * writes/alters `ai.*`; never stores transcript messages.
  */
 
 type Db = NodePgDatabase<typeof schema>;
@@ -33,8 +30,6 @@ export interface SyncResult {
   unmapped: number;
   ambiguous: number;
   skippedNoContact: number;
-  customersCreated: number;
-  identitiesCreated: number;
   conversationsCreated: number;
   conversationsUpdated: number;
 }
@@ -70,43 +65,7 @@ async function activeChannels(db: Db): Promise<ChannelLike[]> {
   }));
 }
 
-/** Find-or-create the customer + identity for a contact. Returns the identity row. */
-async function findOrCreateIdentity(
-  db: Db,
-  tenantId: string,
-  channelId: string,
-  externalContactId: string,
-  counters: SyncResult
-) {
-  const where = and(
-    eq(appCustomerIdentities.tenantId, tenantId),
-    eq(appCustomerIdentities.channelId, channelId),
-    eq(appCustomerIdentities.externalContactId, externalContactId)
-  );
-
-  const [existing] = await db.select().from(appCustomerIdentities).where(where).limit(1);
-  if (existing) return existing;
-
-  const [customer] = await db.insert(appCustomers).values({ tenantId }).returning();
-  counters.customersCreated++;
-
-  await db
-    .insert(appCustomerIdentities)
-    .values({ tenantId, customerId: customer.id, channelId, externalContactId })
-    .onConflictDoNothing({
-      target: [
-        appCustomerIdentities.tenantId,
-        appCustomerIdentities.channelId,
-        appCustomerIdentities.externalContactId,
-      ],
-    });
-  counters.identitiesCreated++;
-
-  const [created] = await db.select().from(appCustomerIdentities).where(where).limit(1);
-  return created ?? null;
-}
-
-/** Sync all sessions for one agent into dashboard mapping rows. Idempotent. */
+/** Sync all sessions for one agent into the dashboard conversation index. Idempotent. */
 export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Promise<SyncResult> {
   const channels = await activeChannels(db);
   const sessions = await readSessionsByAgent(pool, agentId);
@@ -118,8 +77,6 @@ export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Pr
     unmapped: 0,
     ambiguous: 0,
     skippedNoContact: 0,
-    customersCreated: 0,
-    identitiesCreated: 0,
     conversationsCreated: 0,
     conversationsUpdated: 0,
   };
@@ -140,14 +97,9 @@ export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Pr
     }
     result.mapped++;
 
-    const identity = await findOrCreateIdentity(db, tenantId, channelId, externalContactId, result);
-    if (!identity) continue; // defensive; should not happen
-
     const values = buildConversationValues(session, {
       tenantId,
       channelId,
-      customerId: identity.customerId,
-      customerIdentityId: identity.id,
       externalContactId,
     });
 
@@ -178,8 +130,6 @@ export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Pr
         .insert(appConversations)
         .values({
           tenantId,
-          customerId: identity.customerId,
-          customerIdentityId: identity.id,
           channelId,
           agnoSessionId: values.agnoSessionId,
           externalContactId: values.externalContactId,

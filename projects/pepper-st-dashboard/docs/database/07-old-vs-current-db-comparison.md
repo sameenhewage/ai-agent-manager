@@ -6,6 +6,10 @@
 - **Status:** Slice 11B landed (Agno v2 re-alignment + live data restored). This doc re-inventories the
   live DB, compares it against the historical SQL dump, and re-verifies the six `dashboard.app_*`
   tables and the mapping logic against live data.
+- **Superseded in part by Slice 12D-D / ADR-0012 (2026-06-16):** the dashboard now owns **4** tables —
+  `app_customers` + `app_customer_identities` and `app_conversations.customer_id`/`customer_identity_id`
+  were **dropped** (the contact lives by value on `app_conversations.external_contact_id`). Any row/column
+  counts below that mention those tables are a **historical pre-12D-D snapshot**, not the current schema.
 
 > **Hard boundary (unchanged):** the dashboard **monitors/reads** only. No writes to `ai.*`, no writes
 > to `dashboard.*` were made for this gate, no migration, no seed, no sync. The dashboard never sends

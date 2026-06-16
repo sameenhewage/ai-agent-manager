@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   Coins,
@@ -18,6 +17,12 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AreaChart } from "@/components/charts/area-chart";
+import { UpdatingBadge } from "@/components/dashboard/dashboard-toolbar";
+import { PendingSection } from "@/components/shell/pending-section";
+import { RefreshError } from "@/components/shell/refresh-error";
+import { useRangeData } from "@/components/shell/use-range-data";
+import { rangeButtonState } from "@/lib/dashboard/range-toolbar";
+import { isCustomRangeValid, type RangeSelection } from "@/lib/api/query";
 import type { AnalyticsData } from "@/lib/analytics/service";
 
 /**
@@ -45,25 +50,43 @@ function fmtDay(iso: string, timeZone: string): string {
   );
 }
 
-export function Analytics({ data }: { data: AnalyticsData }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const [pending, startTransition] = React.useTransition();
+export function Analytics({
+  initialData,
+  initialSelection,
+}: {
+  initialData: { analytics: AnalyticsData };
+  initialSelection: RangeSelection;
+}) {
+  // Initial data is server-rendered; range/custom changes refetch GET /api/analytics on the
+  // client, keeping the previous report visible while the new range loads (ADR-0013).
+  const { data: payload, pending, pendingKey, error, select, retry } = useRangeData<{
+    analytics: AnalyticsData;
+  }>({
+    endpoint: "/api/analytics",
+    initialData,
+    initialSelection,
+  });
+
+  const data = payload.analytics;
 
   const localDay = (iso: string) =>
     new Intl.DateTimeFormat("en-CA", { timeZone: data.timeZone }).format(new Date(iso)); // YYYY-MM-DD
   const [customFrom, setCustomFrom] = React.useState(() => localDay(data.range.fromISO));
   const [customTo, setCustomTo] = React.useState(() => localDay(data.range.toISO));
   const [showCustom, setShowCustom] = React.useState(data.range.key === "custom");
+  const customActive = showCustom || data.range.key === "custom";
+
+  // Guard: an invalid/incomplete custom range must NOT fire a confusing API request
+  // (the same pure check the route uses — see lib/api/query.ts).
+  const customValid = isCustomRangeValid(customFrom, customTo);
 
   function go(key: string, from?: string, to?: string) {
-    const sp = new URLSearchParams();
-    sp.set("range", key);
-    if (key === "custom" && from && to) {
-      sp.set("from", from);
-      sp.set("to", to);
+    if (key === "custom") {
+      if (!from || !to) return;
+      select({ key: "custom", customFrom: from, customTo: to });
+    } else {
+      select({ key });
     }
-    startTransition(() => router.push(`${pathname}?${sp.toString()}`));
   }
 
   const t = data.totals;
@@ -100,39 +123,57 @@ export function Analytics({ data }: { data: AnalyticsData }) {
         </p>
       </div>
 
-      {/* Range switcher (report toolbar) */}
-      <div
-        className={cn(
-          "flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2.5",
-          pending && "opacity-60"
-        )}
-      >
-        {RANGE_BUTTONS.map((b) => (
-          <button
-            key={b.key}
-            type="button"
-            onClick={() => {
-              setShowCustom(false);
-              go(b.key);
-            }}
-            className={cn(
-              "rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold transition-colors",
-              data.range.key === b.key && !showCustom
-                ? "border-accent bg-accent-weak text-accent"
-                : "border-line bg-panel text-muted hover:bg-hover hover:text-text"
-            )}
-          >
-            {b.label}
-          </button>
-        ))}
+      {/* Range switcher (report toolbar) — consistent loading/pending polish (Slice 12C) */}
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2.5">
+        {RANGE_BUTTONS.map((b) => {
+          const s = rangeButtonState({
+            optionKey: b.key,
+            currentKey: data.range.key,
+            customActive,
+            pending,
+            pendingKey,
+          });
+          return (
+            <button
+              key={b.key}
+              type="button"
+              aria-pressed={s.isActive}
+              aria-disabled={s.isDisabled || undefined}
+              aria-busy={s.isPending || undefined}
+              onClick={() => {
+                if (s.isDisabled) return;
+                setShowCustom(false);
+                go(b.key);
+              }}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold transition-colors",
+                s.isActive
+                  ? "border-accent bg-accent-weak text-accent"
+                  : "border-line bg-panel text-muted hover:bg-hover hover:text-text",
+                s.isDisabled && "cursor-default",
+                // Clicked button keeps full opacity as a subtle pending cue; others soft-dim.
+                s.isDisabled && !s.isActive && !s.isPending && "opacity-70"
+              )}
+            >
+              {b.label}
+            </button>
+          );
+        })}
         <button
           type="button"
-          onClick={() => setShowCustom((v) => !v)}
+          aria-pressed={customActive}
+          aria-disabled={pending || undefined}
+          onClick={() => {
+            if (pending) return;
+            setShowCustom((v) => !v);
+          }}
           className={cn(
             "rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold transition-colors",
-            data.range.key === "custom" || showCustom
+            customActive
               ? "border-accent bg-accent-weak text-accent"
-              : "border-line bg-panel text-muted hover:bg-hover hover:text-text"
+              : "border-line bg-panel text-muted hover:bg-hover hover:text-text",
+            pending && "cursor-default",
+            pending && !customActive && "opacity-70"
           )}
         >
           Custom
@@ -157,14 +198,21 @@ export function Analytics({ data }: { data: AnalyticsData }) {
             />
             <button
               type="button"
-              onClick={() => go("custom", customFrom, customTo)}
-              className="rounded-lg border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-semibold text-[var(--on-accent,#fff)]"
+              disabled={pending || !customValid}
+              onClick={() => {
+                if (customValid) go("custom", customFrom, customTo);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-semibold text-[var(--on-accent,#fff)] disabled:opacity-70"
             >
               Apply
             </button>
           </div>
         ) : null}
+
+        <UpdatingBadge show={pending} className="ml-auto" />
       </div>
+
+      <RefreshError error={error} onRetry={retry} />
 
       {data.clamped ? (
         <div className="flex items-start gap-2 rounded-lg border border-warn bg-warn-weak px-4 py-2.5 text-[12.5px] text-text">
@@ -181,23 +229,24 @@ export function Analytics({ data }: { data: AnalyticsData }) {
       <h2 className="-mb-1 text-[11px] font-bold uppercase tracking-[0.09em] text-faint">
         Overview &middot; {data.range.label}
       </h2>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {kpis.map((k) => (
-          <Card key={k.label}>
-            <CardContent className="flex flex-col gap-1 p-4">
-              <div className="flex items-center gap-2 text-muted">
-                <k.icon className="size-4 text-accent" />
-                <span className="text-[12px] font-semibold uppercase tracking-wide">{k.label}</span>
-              </div>
-              <div className="text-[24px] font-extrabold leading-tight text-text">{k.value}</div>
-              <div className="text-[11.5px] text-faint">{k.sub}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <PendingSection pending={pending} className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {kpis.map((k) => (
+            <Card key={k.label}>
+              <CardContent className="flex flex-col gap-1 p-4">
+                <div className="flex items-center gap-2 text-muted">
+                  <k.icon className="size-4 text-accent" />
+                  <span className="text-[12px] font-semibold uppercase tracking-wide">{k.label}</span>
+                </div>
+                <div className="text-[24px] font-extrabold leading-tight text-text">{k.value}</div>
+                <div className="text-[11.5px] text-faint">{k.sub}</div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
 
-      {/* Daily series — two real charts (parity with the demo's chart row) */}
-      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Daily series — two real charts (parity with the demo's chart row) */}
+        <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>
@@ -255,7 +304,8 @@ export function Analytics({ data }: { data: AnalyticsData }) {
             )}
           </CardContent>
         </Card>
-      </div>
+        </div>
+      </PendingSection>
 
       <p className="text-[11px] text-faint">
         Token &amp; cost are per-session lifetime totals from the agent&rsquo;s metrics, attributed

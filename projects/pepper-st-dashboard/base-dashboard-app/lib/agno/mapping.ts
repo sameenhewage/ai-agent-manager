@@ -70,8 +70,6 @@ export function deriveExternalContactId(session: AgnoSession): string | null {
 export interface ConversationIds {
   tenantId: string;
   channelId: string;
-  customerId: string;
-  customerIdentityId: string;
   externalContactId: string; // resolved (non-null) by the caller from session.user_id
 }
 

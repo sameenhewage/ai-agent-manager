@@ -1,3 +1,5 @@
+"use client";
+
 import * as React from "react";
 import Link from "next/link";
 import {
@@ -20,7 +22,10 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AreaChart } from "@/components/charts/area-chart";
-import { DashboardToolbar } from "@/components/dashboard/dashboard-toolbar";
+import { RangeToolbar } from "@/components/dashboard/dashboard-toolbar";
+import { PendingSection } from "@/components/shell/pending-section";
+import { RefreshError } from "@/components/shell/refresh-error";
+import { useRangeData } from "@/components/shell/use-range-data";
 import type { AnalyticsData } from "@/lib/analytics/service";
 import type { ConversationListItem } from "@/lib/chat-monitor/presenter";
 import {
@@ -28,6 +33,14 @@ import {
   buildDashboardKpis,
   fmtDateTime,
 } from "@/lib/dashboard/presenter";
+
+/** Slice 12C (ADR-0013): the Dashboard's dynamic payload, loaded SSR first then refreshed
+ *  via GET /api/dashboard on each range change. Fully serializable, masked, PII-free. */
+export interface DashboardData {
+  analytics: AnalyticsData;
+  recent: ConversationListItem[];
+  restrictedCount: number;
+}
 
 /**
  * Operations Dashboard (Slice 7C) — a dense, demo-grammar SaaS overview built ENTIRELY
@@ -74,14 +87,24 @@ const NOT_TRACKED = [
 ];
 
 export function Dashboard({
-  data,
-  recent,
-  rangeKey,
+  initialData,
+  initialRange,
 }: {
-  data: AnalyticsData;
-  recent: ConversationListItem[];
-  rangeKey: string;
+  initialData: DashboardData;
+  initialRange: string;
 }) {
+  // Initial data is server-rendered; every range change refetches GET /api/dashboard on the
+  // client, keeping the previous data visible while the new range loads (ADR-0013).
+  const { data: payload, pending, pendingKey, error, selection, select, retry } =
+    useRangeData<DashboardData>({
+      endpoint: "/api/dashboard",
+      initialData,
+      initialSelection: { key: initialRange },
+    });
+
+  const data = payload.analytics;
+  const recent = payload.recent;
+
   const kpis = buildDashboardKpis(data);
   const chart = buildDashboardChartSeries(data);
   const hasData = data.totals.conversations > 0;
@@ -104,9 +127,16 @@ export function Dashboard({
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           <Badge variant="ai">Real data only</Badge>
-          <DashboardToolbar currentRange={rangeKey} />
+          <RangeToolbar
+            currentKey={selection.key}
+            pending={pending}
+            pendingKey={pendingKey}
+            onSelect={(key) => select({ key })}
+          />
         </div>
       </div>
+
+      <RefreshError error={error} onRetry={retry} />
 
       {data.clamped ? (
         <div className="flex items-start gap-2 rounded-lg border border-warn bg-warn-weak px-4 py-2.5 text-[12.5px] text-text">
@@ -118,8 +148,11 @@ export function Dashboard({
         </div>
       ) : null}
 
-      {/* Dense KPI grid — real metrics only */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+      {/* Dynamic data region — the previous data stays FULLY visible while refreshing; the
+          only updating cue is the toolbar "Updating…" badge (Slice 12C-UX). aria-busy for a11y. */}
+      <PendingSection pending={pending} className="flex flex-col gap-4">
+        {/* Dense KPI grid — real metrics only */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
         {kpis.map((k) => {
           const Icon = KPI_ICON[k.key] ?? BarChart3;
           const ai = k.accent === "ai";
@@ -143,10 +176,10 @@ export function Dashboard({
             </Card>
           );
         })}
-      </div>
+        </div>
 
-      {/* Two real charts (conversations + tokens per day) */}
-      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Two real charts (conversations + tokens per day) */}
+        <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>
@@ -209,10 +242,10 @@ export function Dashboard({
             )}
           </CardContent>
         </Card>
-      </div>
+        </div>
 
-      {/* Recent conversations (real, masked) + coverage/window meta */}
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        {/* Recent conversations (real, masked) + coverage/window meta */}
+        <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <Card className="flex flex-col overflow-hidden">
           <CardHeader>
             <CardTitle>
@@ -283,7 +316,8 @@ export function Dashboard({
             <Meta label="Last activity" value={fmtDateTime(data.totals.lastActivityAt, data.timeZone)} mono />
           </CardContent>
         </Card>
-      </div>
+        </div>
+      </PendingSection>
 
       {/* One honest panel — no fabricated cards (ADR-0007) */}
       <Card className="border-dashed bg-panel2">
