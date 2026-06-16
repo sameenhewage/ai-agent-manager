@@ -30,6 +30,7 @@ import type {
   ConversationMessagesState,
 } from "@/lib/chat-monitor/message-pagination";
 import { createChatInitialLoad, resolveInitialSelection } from "./initial-load";
+import { reanchorScrollTop } from "./scroll-anchor";
 
 /**
  * Chat Monitor (Slice 7) — CLIENT component. The page shell paints instantly; this
@@ -460,6 +461,26 @@ function ConversationRow({
   );
 }
 
+/** The message bubble nearest the TOP of the scroll viewport + its distance from the viewport
+ *  top — a stable anchor for restoring the reading position across an older-page prepend. Reads
+ *  layout (not pure); pairs with the pure `reanchorScrollTop`. */
+function captureTopAnchor(el: HTMLElement): { id: string; offset: number } | null {
+  const containerTop = el.getBoundingClientRect().top;
+  const nodes = el.querySelectorAll<HTMLElement>("[data-mid]");
+  for (const node of nodes) {
+    const offset = node.getBoundingClientRect().top - containerTop;
+    if (offset >= 0) return { id: node.dataset.mid ?? "", offset }; // first bubble at/below the top
+  }
+  return null;
+}
+
+/** Find a rendered message bubble by its opaque message id (`data-mid`). */
+function findMessageNode(el: HTMLElement, id: string): HTMLElement | null {
+  const nodes = el.querySelectorAll<HTMLElement>("[data-mid]");
+  for (const node of nodes) if (node.dataset.mid === id) return node;
+  return null;
+}
+
 function ConversationDetail({
   item,
   chat,
@@ -475,36 +496,68 @@ function ConversationDetail({
 }) {
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const didInitialScroll = React.useRef(false);
-  const pendingPrepend = React.useRef<{ prevHeight: number; prevTop: number } | null>(null);
+  // Anchor captured the instant an older-page load is triggered: the message nearest the top of
+  // the viewport + its distance from the viewport top. Restored ONLY once the prepend lands.
+  const anchorRef = React.useRef<{ id: string; offset: number } | null>(null);
 
   const ready = chat && chat.status === "ready" ? chat : null;
   const messages = ready ? ready.messages : [];
 
-  // Scroll behaviour: jump to the bottom on first load (latest messages), and HOLD the
-  // reading position when older messages are prepended (never yank the user to the bottom).
+  // Scroll behaviour. Keyed on the MESSAGES array identity ONLY — so the `loadingOlder` spinner
+  // toggle (which changes `ready` but NOT `messages`) can never consume the anchor before the real
+  // prepend lands. (1) Older prepend: re-anchor the captured message to its previous viewport
+  // offset, MEASURED after the DOM updates — immune to the spinner/button/day-separator heights
+  // and the browser's own scroll anchoring (WhatsApp-style: the same message stays put, no jump).
+  // (2) First load: jump to the bottom (latest messages).
   React.useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (pendingPrepend.current) {
-      el.scrollTop =
-        el.scrollHeight - pendingPrepend.current.prevHeight + pendingPrepend.current.prevTop;
-      pendingPrepend.current = null;
-      return;
+    const anchor = anchorRef.current;
+    if (anchor) {
+      anchorRef.current = null;
+      // Re-anchor the captured message to its pre-prepend viewport offset. INSTANT (never
+      // animated). Two passes: synchronously before paint (so no uncorrected frame is shown)
+      // and once on the next frame to absorb any residual layout shift (variable bubble heights
+      // / late reflow). Browser scroll-anchoring is disabled on the container (overflow-anchor:
+      // none) so nothing fights this correction.
+      const correct = () => {
+        const node = findMessageNode(el, anchor.id);
+        if (!node) return;
+        const currentOffset = node.getBoundingClientRect().top - el.getBoundingClientRect().top;
+        el.scrollTop = reanchorScrollTop(el.scrollTop, currentOffset, anchor.offset);
+      };
+      correct();
+      const raf = requestAnimationFrame(correct);
+      return () => cancelAnimationFrame(raf);
     }
-    if (ready && !didInitialScroll.current) {
+    if (messages.length > 0 && !didInitialScroll.current) {
       el.scrollTop = el.scrollHeight;
       didInitialScroll.current = true;
     }
-  }, [messages, ready]);
+  }, [messages]);
+
+  // Capture the anchor at the user's CURRENT top-visible message, then start the load. Used by the
+  // "Load older messages" button (the scroll path re-captures continuously in handleScroll).
+  function beginLoadOlder() {
+    const el = scrollRef.current;
+    if (el) anchorRef.current = captureTopAnchor(el);
+    onLoadOlder();
+  }
 
   function handleScroll() {
     const el = scrollRef.current;
-    if (!el || !ready || !ready.hasMoreBefore || ready.loadingOlder) return;
-    if (el.scrollTop <= 72) {
-      // Capture geometry BEFORE the prepend so the layout effect can restore the position.
-      pendingPrepend.current = { prevHeight: el.scrollHeight, prevTop: el.scrollTop };
-      onLoadOlder();
+    if (!el || !ready || !ready.hasMoreBefore) return;
+    // Keep the anchor pinned to the user's CURRENT top message — continuously WHILE an older page
+    // is in flight and they keep scrolling toward the top. The earlier code captured the anchor
+    // only at fetch-START (scrollTop ≈ 72); during the async fetch the user scrolls on (often all
+    // the way to scrollTop 0), so by the time the prepend landed that anchor was stale and the
+    // correction snapped the view back up by ≈ the trigger threshold (the ~70px jump in the
+    // video). Re-capturing on every scroll restores where the user ACTUALLY is when it commits.
+    if (ready.loadingOlder) {
+      anchorRef.current = captureTopAnchor(el);
+      return;
     }
+    if (el.scrollTop <= 72) beginLoadOlder();
   }
 
   return (
@@ -539,6 +592,9 @@ function ConversationDetail({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
+        // overflow-anchor: none disables the browser's native scroll anchoring so it can't fight
+        // the manual element-anchor correction below (the source of the post-load shift).
+        style={{ overflowAnchor: "none" }}
         className="wa-chat-bg min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-6"
       >
         {!chat || chat.status === "loading" ? (
@@ -567,7 +623,8 @@ function ConversationDetail({
           // centered max-width column (that made customer bubbles float mid-panel).
           <div className="flex min-h-full flex-col justify-end">
             {ready && ready.hasMoreBefore ? (
-              <div className="flex justify-center py-2">
+              // Fixed height so the button↔spinner swap never changes layout (no anchor bump).
+              <div className="flex h-11 items-center justify-center">
                 {ready.loadingOlder ? (
                   <span className="inline-flex items-center gap-1.5 text-[11.5px] text-muted">
                     <Loader2 className="size-3.5 animate-spin" /> Loading older messages…
@@ -575,7 +632,7 @@ function ConversationDetail({
                 ) : (
                   <button
                     type="button"
-                    onClick={onLoadOlder}
+                    onClick={beginLoadOlder}
                     className="rounded-full border border-line bg-panel px-3 py-1 text-[11.5px] font-medium text-muted transition-colors hover:bg-hover"
                   >
                     Load older messages
@@ -594,7 +651,7 @@ function ConversationDetail({
               return (
                 <React.Fragment key={m.id}>
                   {showDay ? <DateSeparator label={fmtDayLabel(m.createdAt)} /> : null}
-                  <MessageBubble role={m.role} text={m.text} createdAt={m.createdAt} grouped={grouped} />
+                  <MessageBubble id={m.id} role={m.role} text={m.text} createdAt={m.createdAt} grouped={grouped} />
                 </React.Fragment>
               );
             })}
@@ -608,11 +665,13 @@ function ConversationDetail({
 }
 
 function MessageBubble({
+  id,
   role,
   text,
   createdAt,
   grouped,
 }: {
+  id: string;
   role: "customer" | "assistant";
   text: string;
   createdAt: string | null;
@@ -621,7 +680,8 @@ function MessageBubble({
   // customer → LEFT (incoming), assistant → RIGHT (outgoing). Full-width row, never centered.
   const { row, outgoing } = messageAlignment(role);
   return (
-    <div className={cn("flex", row, grouped ? "mt-0.5" : "mt-2")}>
+    // `data-mid` = the scroll anchor used to preserve the reading position on older-page prepend.
+    <div data-mid={id} className={cn("flex", row, grouped ? "mt-0.5" : "mt-2")}>
       <div
         className={cn(
           "relative max-w-[80%] rounded-lg px-2.5 py-1.5 text-[13.5px] leading-snug shadow-sm sm:max-w-[72%]",

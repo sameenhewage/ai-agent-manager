@@ -58,9 +58,22 @@ stay stable as new messages append at the end.
   page — the list is never refetched or reset. The header shows the customer name
   **immediately** (from the list item) while messages load.
 - Initial load = **latest 20** (`CHAT_MESSAGE_PAGE_SIZE` / server `DEFAULT_PAGE_SIZE = 20`,
-  `MAX_PAGE_SIZE = 50`), auto-scrolled to the bottom; scroll-up (or a "Load older messages"
+  `MAX_PAGE_SIZE = 100`), auto-scrolled to the bottom; scroll-up (or a "Load older messages"
   button) fetches the previous page of 20 via the cursor, **prepends** it, and **holds the
-  reading position** (no jump to bottom).
+  reading position** — no jump to the older top, no jump to the bottom.
+- **Scroll-anchor preservation (TD-083/084/085):** the message nearest the viewport top is
+  captured (`data-mid` + its offset) and **kept fresh on every scroll event — including while an
+  older page is still loading** — so the anchor always reflects where the user *currently* is.
+  (Capturing it only once at fetch-start was the real bug: during the async fetch the user scrolls
+  on to the top, so the old anchor was stale and the view snapped up ~70px — TD-085.) Once the
+  prepend lands, that exact element is re-anchored to its last-seen offset
+  (`reanchorScrollTop`/`anchorCorrectionDelta`, measurement-based). The correction is **two-pass**
+  (`useLayoutEffect` before paint + one `requestAnimationFrame` residual) and **instant** (no
+  smooth scroll). The container sets **`overflow-anchor: none`** so the browser's native scroll
+  anchoring can't fight it, and the top loader row is **fixed-height** so the button↔spinner swap
+  can't bump the anchor. Proven on the **desktop** layout (dev + prod) with a realistic flick that
+  reaches the top during the fetch: the top-visible message moves **≤ 1px** across 20→40→60→75
+  (scroll path) and **0px** via the "Load older" button — no jump to top/bottom, no bump.
 - **Initial-load ownership (TD-082):** one owner loads the conversation list (once), one owner
   loads the selected transcript (the `selectedId` effect, once per selection); `loadList()`
   never loads a transcript. This removed the earlier global request de-dupe — duplicate
