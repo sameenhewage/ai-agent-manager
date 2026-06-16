@@ -3,8 +3,9 @@ import { buildSeedPayload, PEPPER_ST_SEED } from "./seed";
 
 /**
  * Slice 3 seed-payload unit tests (no database). Verifies the seed shape matches
- * the approved decisions: PEPPER ST. tenant, WhatsApp/concierge channel, and an
- * explicit enterprise/unlimited entitlement — with no phone-number assumptions.
+ * the approved decisions: PEPPER ST. tenant, WhatsApp channel (v2 agent_id is
+ * derived, not stored), and an explicit enterprise/unlimited entitlement — with
+ * no phone-number assumptions.
  */
 
 const ALLOWED_STATUS = ["active", "suspended", "archived"];
@@ -20,11 +21,11 @@ describe("PEPPER ST. seed payload", () => {
     expect(ALLOWED_ONBOARDING).toContain(tenant.onboardingStatus);
   });
 
-  it("channel is WhatsApp 'whatsapp-main' mapped to the concierge agent", () => {
+  it("channel is WhatsApp 'whatsapp-main'; agent_id is derived (no stored source_agent_id)", () => {
     const { channel } = buildSeedPayload();
     expect(channel.type).toBe("whatsapp");
     expect(channel.channelKey).toBe("whatsapp-main");
-    expect(channel.sourceAgentId).toBe("concierge");
+    expect(channel.sourceAgentId).toBeNull();
   });
 
   it("entitlement is enterprise / fully enabled / unlimited (NULL retention)", () => {

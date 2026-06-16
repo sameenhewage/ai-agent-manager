@@ -3,10 +3,137 @@
 - **Project:** pepper-st-dashboard
 - **Purpose:** running, phase/version-wise log of technical decisions. Newest
   first. Each entry links to the authoritative ADR/workflow.
-- **Last updated:** 2026-06-15
+- **Last updated:** 2026-06-16
 
 > Living document. **No feature is complete unless this log (and the relevant
 > ADR/workflow/handoff) is updated.**
+
+---
+
+## 2026-06-16 — Gate 12: Full DB re-analysis + product-behaviour gap review (READ-ONLY; no schema/data/app changes)
+
+### TD-068 — Live DB re-verified post-11B; no migration; hardening roadmap 12A–12G drafted
+Read-only gate — **no `ai.*`/`dashboard.*` writes, no migration/seed/sync**. Re-ran `db:agno:reconfirm`
++ the three hardened verifiers (all **PASS**: live 4 / mapped 4 / active orphans 0 / archived 13;
+analytics totals == independent SQL — conv 4, turns 29, tokens 630,305, cost $0.0635) and parsed the
+historical `/home/sameen/papper_full_dump.sql` locally (**DDL only — no data rows read**). **Findings:**
+(1) the dump is an **`ai`-schema-only** export that is **already v2-shaped** (13 `agno_*` tables;
+`agno_sessions` carries the full v2 columns), so the pre-v2 `concierge`/phone-`session_id` shape isn't
+even in it and the v2 identity/transcript/token contract is **stable across the Jun-15 dump and Jun-16
+live** (re-confirms ADR-0011). (2) `ai.*` structure unchanged vs the dump; `dashboard.*` (Drizzle-owned)
+isn't in the dump. (3) All six `dashboard.app_*` tables + mapping logic re-verify green → **no schema
+migration warranted**. (4) **Scale risks:** `ai.agno_sessions` has **no `agent_id` index** (only
+`session_id` PK + `created_at` + `session_type`) → `WHERE agent_id=$1` is a seq scan (~0.5s
+list/transcript at just 4 sessions); analytics ships+parses the **full `runs` JSONB for every session**
+per request with no SQL date filter. Safe dashboard-side fix (no `ai.*` change): read by
+**`session_id = ANY($mappedIds)`** (PK) + SQL `jsonb_array_length` for turns. (5) **Product gaps:**
+shallow cost/token view (token splits/cost-day/averages/coverage-warning unused), subtle filter feedback
++ whole-page recompute, no real-time, and a **static full-load transcript** (no scroll-up paging). (6)
+**PII:** 13 v1 leftover customer/identity rows retain historical phone (archived only; purge = separate
+approval). `typecheck` clean; **114/114** tests. **Decisions:** no migration; defer rollups/message-index
+until scale demands (JSONB **parse-and-slice first**; content duplication needs a **new ADR superseding
+ADR-0004**); real-time = **polling** (list/counters) + optional SSE for the chat tail — **no WebSocket /
+no DB triggers / no send-reply / no fabricated metrics**. Hardening split into approval-gated slices
+**12A–12G** (`docs/phases/phase-1-post-acceptance-hardening.md`). New docs:
+`docs/database/07-old-vs-current-db-comparison.md`,
+`docs/architecture/08-dashboard-data-loading-and-realtime-strategy.md`,
+`docs/product/05-dashboard-analytics-chat-gaps.md`. **Gate 12 verdict: PASS** (analysis complete,
+roadmap ready). Deploy data-blocker (Gate 10/11A) **cleared**; revisit deploy after the perf/real-time
+hardening slices. **No implementation performed in this gate.**
+
+---
+
+## 2026-06-16 — Slice 11B: Agno v2 re-alignment — dashboard writes EXECUTED + verified (approval granted)
+
+### TD-067 — Orphan archival + re-sync done; live data restored; all verifiers PASS
+Product approval granted under strict governance (`dashboard.*` only, **no `ai.*` writes**, no migration,
+no unrelated seed, **archive-not-delete**). Executed command-by-command: (1) `db:agno:reconfirm` pre-write
+snapshot — **4** live sessions under the derived tenant-first `agent_id`, `user_id` 0 nulls, 13 dashboard
+orphans / 0 mapped; (2) new `db:agno:archive-orphans` (reads a pre-count + reason, then dashboard-only
+`status='archived'`) — **archived 13** v1 orphan conversations (their `agno_session_id`s are v1 phone-based
+ids that no longer exist post-migration); (3) `db:agno:sync` (now `syncAllActiveChannels`, derived agent
+key) — **considered 4 / mapped 4**, unmapped/ambiguous/skippedNoContact 0, **2 customers / 2 identities**
+(1 identity : N), **4 conversations created**. Hardened verifiers all **PASS**: `db:agno:verify`
+(live 4 / mapped 4 / archived 13 / **active orphans 0**), `db:chat:verify` (4 masked, **non-empty
+transcripts 4/4**, no system/tool, no raw-id leaks, IDOR-safe), `db:analytics:verify` (totals match the
+independent agent-filtered SQL exactly; coverage 4/4). Browser smoke (Dashboard / Chat Monitor /
+Analytics): real live data, contacts masked (`94•••••784`), transcripts render from `ai.agno_sessions.runs`
+JSONB, "real data only" / no fabricated KPIs, read-only — no console errors (only a home-page favicon 404).
+New code (dashboard-only, no schema): exclude `status='archived'` from the Chat Monitor list, the Analytics
+universe, and the verifier orphan check; `lib/db/seed.ts` `source_agent_id=null`. `typecheck` clean,
+**114/114** unit tests. Follow-ups (out of scope, optional): 13 v1 `app_customers`/`app_customer_identities`
+rows remain (v1 phone PII, retained by the archive-not-delete choice) — purging needs a separate hard-delete
+approval; a few assistant messages with tool-only content render as empty bubbles (cosmetic). The Gate
+9/11A data blocker is cleared, so deploy readiness can be revisited.
+
+---
+
+## 2026-06-16 — Slice 11B: Agno v2 re-alignment — contract CONFIRMED + code/verify (dashboard writes still approval-gated)
+
+### TD-066 — `agent_id` is DERIVED `${tenant_id}:${channel_id}`; ADR-0011 Accepted
+AI dev confirmed and live `db:agno:reconfirm` **proved** the v2 contract: `ai.agno_sessions.agent_id` is
+the composite **`<app_tenants.id>:<app_channels.id>`** (len 73, single `:`, both halves UUID-shaped;
+ordering **tenant-first** — `strict_tenant_then_channel=1`, reversed `=0`), and the live session's
+`agent_id` equals the **current** `pepper-st`/`whatsapp-main` tenant+channel UUIDs (no ID-coordination
+blocker). `user_id` = 11-digit mobile (PII, 0 nulls) = contact; `session_id` = 32-hex opaque key.
+**Decision:** the mapping seam **derives** the agent key (`deriveExpectedAgentId(tenantId, channelId)`) and
+matches live `agent_id`; **no stored opaque value, no env var, no `agent_name` scan**; `source_agent_id`
+demoted to an optional derived/legacy cache. Resolves the TD-065 open sub-decision; **ADR-0011 → Accepted**.
+Slice 11B lands the §4.1 logic/config change set + verify-script hardening (derived-agent + live-coverage +
+empty-transcript checks) as **code-only** — **no DB writes**. Dashboard-only writes (archive 13 orphans →
+`db:agno:sync` → hardened verifies + browser smoke) stay **product-approval-gated** (§7). `ai.*` stays
+read-only; link by-value; no transcript duplication. Docs updated: `docs/database/06`, ADR-0011,
+`docs/database/02/03/05`, `CONTEXT.md`. Env note: dev `node` default is v10 (too old for `tsx`) — run DB
+scripts with an nvm node ≥18.
+
+---
+
+## 2026-06-16 — Gate 11A: Agno v2 re-alignment DESIGN / approval gate (READ-ONLY; no schema/data/app changes)
+
+### TD-065 — No dashboard migration needed; re-alignment is logic+config behind the mapping seam
+Design/approval gate only — **no DB writes, no migration, no seed, no sync, no app changes**. Re-confirmed
+the live contract read-only via a new permanent tool `db:agno:reconfirm` (`scripts/agno-reconfirm.ts`,
+session pinned read-only): **1** session; `agent_id` composite `<uuid>:<uuid>` (73 chars), `agent_name=
+'PEPPER ST. WhatsApp Concierge'`; `session_id` = 32-char hex (not phone); **`user_id` = 11-digit phone
+(0 nulls)**; `session_data.session_metrics.{total_tokens,cost}` present; roles user/assistant/tool/system;
+coverage **13 conversations / 0 mapped / 13 orphans** (configured agent still `concierge`). **Decision: NO
+dashboard schema migration** — the existing schema already carries the three v2 identifiers as distinct
+columns: `app_channels.source_agent_id` (agent key, value-only change), `app_conversations.agno_session_id`
+(opaque `session_id`, no change), `app_customer_identities.external_contact_id` (← `user_id`, derivation
+source change). Rejected `source_session_id`/`source_user_id`/`source_agent_key` (already represented);
+deferred `source_contract_version` + explicit orphan-status (orphans can be archived via existing
+`status='archived'` or deleted). Re-alignment = an 11-point logic/config change set (consolidate the v2
+contract into `lib/agno/mapping.ts`: `deriveExternalContactId`→`user_id`, session key=`session_id`, drop
+the scattered `'concierge'` literal, agent key from config/env) + dashboard-only orphan cleanup + re-sync
++ **verify-script hardening** (`db:agno:verify`/`db:chat:verify` currently **false-PASS** on stale data;
+the v1 **1:1** identity↔conversation invariant becomes **1:N** in v2). One sub-decision **pending AI dev**:
+agent-filter strategy (composite `agent_id` default vs `runs[].agent_name`). Evidence (read-only):
+`typecheck` clean, **106/106** tests, `db:analytics:verify` **FAIL** (`live=13 sql=0`) = drift confirmed.
+Deploy **remains BLOCKED** (Gate 9 superseded). Plan: `docs/database/06-agno-v2-realignment-plan.md`;
+ADR-0011 updated (still **Proposed**). **Verdict: Gate 11A PASS** (design ready for approval). Added
+read-only `db:agno:reconfirm`; no other changes.
+
+---
+
+## 2026-06-16 — Gate 10: Full database discovery / data contract (READ-ONLY; no schema/data/app changes)
+
+### TD-064 — Agno platform migrated; current data contract documented; live data BLOCKED
+Read-only introspection (session pinned `default_transaction_read_only=on`; structure/counts/JSON-paths
+only — no content/PII) found the external AI platform **migrated Agno to a richer schema and reset the
+data**. `ai` now has **13 tables** (was effectively just `agno_sessions`): + `agno_knowledge` (32),
+`agno_memories` (1, PII), `agno_metrics` (daily-rollup, empty), components/learnings/schedules/evals/
+approvals. `ai.agno_sessions` now holds **1** session with **breaking identifier changes**: `agent_id`
+is a composite `<uuid>:<uuid>` (literal `concierge` gone; label lives at `runs[].agent_name='PEPPER ST.
+WhatsApp Concierge'`), `session_id` is a 32-char opaque token, and the **phone moved to the new
+`user_id`** column. Unchanged: `runs[].messages[]` shape (role/content/id/created_at/from_history),
+epoch `int8` timestamps, and the `session_data.session_metrics.{total_tokens,cost}` path → the parser
+needs no change. **Mapping coverage collapsed 13/13 → 0**: all 13 `app_conversations` are orphans, the
+1 live session is invisible (channel resolves `source_agent_id='concierge'`). Evidence: `db:agno:inspect`
+concierge=0; `db:analytics:verify` **FAIL** (live=13 sql=0); `db:agno:verify`/`db:chat:verify` gave a
+**misleading PASS** (don't check live coverage). `typecheck` clean, **106/106** unit tests pass — this is
+**data-contract drift, not a code bug**. Verdict: **Gate 10 PASS** (DB understood + documented) but a
+**deploy BLOCKER** is now open — supersedes the Gate 9 "ready" status until re-mapping is approved.
+Docs: `docs/database/01..05`, ADR-0011 (Proposed). No schema/seed/sync/app changes made.
 
 ---
 

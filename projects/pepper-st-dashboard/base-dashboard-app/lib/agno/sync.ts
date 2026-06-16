@@ -11,6 +11,8 @@ import {
 import type { AgnoSession } from "./types";
 import {
   buildConversationValues,
+  deriveExpectedAgentId,
+  deriveExternalContactId,
   resolveChannelForAgent,
   type ChannelLike,
 } from "./mapping";
@@ -30,6 +32,7 @@ export interface SyncResult {
   mapped: number;
   unmapped: number;
   ambiguous: number;
+  skippedNoContact: number;
   customersCreated: number;
   identitiesCreated: number;
   conversationsCreated: number;
@@ -39,7 +42,7 @@ export interface SyncResult {
 /** READ-ONLY: load Agno sessions for an agent. Only SELECT; never mutates `ai.*`. */
 export async function readSessionsByAgent(pool: Pool, agentId: string): Promise<AgnoSession[]> {
   const res = await pool.query(
-    `select session_id, session_type, agent_id, runs, created_at, updated_at, metadata, summary
+    `select session_id, session_type, agent_id, user_id, runs, created_at, updated_at, metadata, summary
        from ai.agno_sessions
       where agent_id = $1`,
     [agentId]
@@ -48,6 +51,7 @@ export async function readSessionsByAgent(pool: Pool, agentId: string): Promise<
     session_id: String(r.session_id),
     session_type: r.session_type ?? null,
     agent_id: r.agent_id ?? null,
+    user_id: r.user_id != null ? String(r.user_id) : null,
     runs: Array.isArray(r.runs) ? r.runs : r.runs ?? null,
     created_at: r.created_at != null ? Number(r.created_at) : null,
     updated_at: r.updated_at != null ? Number(r.updated_at) : null,
@@ -113,6 +117,7 @@ export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Pr
     mapped: 0,
     unmapped: 0,
     ambiguous: 0,
+    skippedNoContact: 0,
     customersCreated: 0,
     identitiesCreated: 0,
     conversationsCreated: 0,
@@ -126,10 +131,14 @@ export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Pr
       else result.unmapped++;
       continue;
     }
-    result.mapped++;
-
     const { id: channelId, tenantId } = resolution.channel;
-    const externalContactId = session.session_id;
+    const externalContactId = deriveExternalContactId(session);
+    if (externalContactId == null) {
+      // v2: no user_id => no contact; skip rather than create an empty-contact identity.
+      result.skippedNoContact++;
+      continue;
+    }
+    result.mapped++;
 
     const identity = await findOrCreateIdentity(db, tenantId, channelId, externalContactId, result);
     if (!identity) continue; // defensive; should not happen
@@ -139,6 +148,7 @@ export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Pr
       channelId,
       customerId: identity.customerId,
       customerIdentityId: identity.id,
+      externalContactId,
     });
 
     const [existingConv] = await db
@@ -191,9 +201,15 @@ export async function syncAgentSessions(db: Db, pool: Pool, agentId: string): Pr
   return result;
 }
 
-/** Phase 1 demo agent. */
-export const CONCIERGE_AGENT_ID = "concierge";
-
-export function syncConcierge(db: Db, pool: Pool): Promise<SyncResult> {
-  return syncAgentSessions(db, pool, CONCIERGE_AGENT_ID);
+/**
+ * Sync every ACTIVE channel using its DERIVED agent_id ("<tenantId>:<channelId>"). This is the v2
+ * entry point — no hardcoded agent literal. Multi-tenant/-channel safe (one SyncResult per channel).
+ */
+export async function syncAllActiveChannels(db: Db, pool: Pool): Promise<SyncResult[]> {
+  const channels = await activeChannels(db);
+  const results: SyncResult[] = [];
+  for (const c of channels) {
+    results.push(await syncAgentSessions(db, pool, deriveExpectedAgentId(c.tenantId, c.id)));
+  }
+  return results;
 }

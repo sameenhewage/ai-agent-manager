@@ -91,7 +91,9 @@ chat, rich AI metadata. See `roadmap.md`.
 | 3 | Tech stack (`docs/architecture/05-tech-stack.md`) | ✅ locked |
 | 4 | Per-slice QA + docs/handoff update | per slice |
 | 8 | **Phase 1 acceptance review** — product / UI / data / security-PII / performance / docs across Dashboard, Chat Monitor, Analytics (no blockers) | ✅ PASS (2026-06-15) |
-| 9 | **Deploy readiness / deploy-target decision** — options, DB/env readiness, boundaries, risks, checklist (decision gate; nothing deployed) | ✅ PASS (2026-06-15) — recommend self-host adjacent to Agno PG; see `docs/deployment/01-deploy-readiness.md`, ADR-0010 (Proposed) |
+| 9 | **Deploy readiness / deploy-target decision** — options, DB/env readiness, boundaries, risks, checklist (decision gate; nothing deployed) | ✅ PASS (2026-06-15) — recommend self-host adjacent to Agno PG; see `docs/deployment/01-deploy-readiness.md`, ADR-0010 (Proposed). **⚠ Superseded by Gate 10 data blocker.** |
+| 10 | **Full database discovery / data contract** — read-only inventory of `ai`/`dashboard`, AI+dashboard contracts, feature/PII/perf impact (no schema/data/app changes) | ✅ PASS (2026-06-16) — DB understood + documented; **opens a deploy BLOCKER**: Agno migrated, agent/contact identifiers changed, 13 orphan conversations. See `docs/database/01..05`, ADR-0011 (Proposed) |
+| 11A | **Agno v2 re-alignment design / approval** — schema-fit analysis, migration decision, implementation plan, verify hardening, cleanup/resync plan (design only; no writes) | ✅ PASS (2026-06-16) — **no schema migration needed**; logic+config re-alignment behind the mapping seam, pending AI-dev answers + approval. See `docs/database/06-agno-v2-realignment-plan.md`, ADR-0011 (Proposed). **Deploy still BLOCKED.** |
 
 ## Acceptance (phase-level)
 

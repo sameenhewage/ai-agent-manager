@@ -69,6 +69,7 @@ async function main() {
        join dashboard.app_tenants t  on t.id = c.tenant_id  and t.slug = 'pepper-st'
        join dashboard.app_channels ch on ch.id = c.channel_id and ch.channel_key = 'whatsapp-main'
        join ai.agno_sessions s on s.session_id = c.agno_session_id
+                              and s.agent_id = (t.id::text || ':' || ch.id::text)
       where c.last_at >= $1 and c.last_at < $2`,
     [data.range.fromISO, data.range.toISO]
   );
@@ -83,6 +84,23 @@ async function main() {
   check("turns match independent SQL", data.totals.turns === dTurns, `live=${data.totals.turns} sql=${dTurns}`);
   check("total tokens match independent SQL", data.totals.totalTokens === dTokens, `live=${data.totals.totalTokens} sql=${dTokens}`);
   check("cost matches independent SQL", Math.abs(data.totals.cost - dCost) < 1e-6, `live=${data.totals.cost} sql=${dCost}`);
+
+  // v2 live-coverage: count sessions under the DERIVED agent_id; if any exist they MUST join the
+  // mapped universe (catches the Gate 10 drift where conversations map to 0 live sessions).
+  const live = await pool.query<{ n: number }>(
+    `select count(*)::int n
+       from ai.agno_sessions s
+       join dashboard.app_channels ch on ch.channel_key = 'whatsapp-main'
+       join dashboard.app_tenants t on t.id = ch.tenant_id and t.slug = 'pepper-st'
+      where s.agent_id = (t.id::text || ':' || ch.id::text)`
+  );
+  const liveSessions = Number(live.rows[0].n);
+  console.log(`live sessions (derived agent_id): ${liveSessions}`);
+  check(
+    "live sessions under the derived agent_id join the mapped universe (no 0-coverage drift)",
+    liveSessions === 0 || dConvs > 0,
+    `live=${liveSessions} joined=${dConvs}`
+  );
   check("new + returning == conversations", data.totals.newContacts + data.totals.returningContacts === data.totals.conversations);
   check(
     "only real metric keys (no fabricated KPIs)",

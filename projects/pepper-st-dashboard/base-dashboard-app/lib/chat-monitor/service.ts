@@ -1,10 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import * as schema from "../db/schema";
 import { appChannels, appConversations, appTenantEntitlements } from "../db/schema";
 import { resolveCurrentTenant } from "../tenant/context";
 import { parseTranscript } from "../agno/parser";
+import { deriveExpectedAgentId } from "../agno/mapping";
 import { maskContactId } from "../agno/mask";
 import type { AgnoSession, ParsedTranscript } from "../agno/types";
 import {
@@ -33,7 +34,6 @@ const EMPTY_TRANSCRIPT: ParsedTranscript = {
   lastActivityAt: null,
 };
 
-const AGENT_FALLBACK = "concierge";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Resolve demo tenant + active WhatsApp channel + raw-history retention. Shared by both
@@ -55,7 +55,9 @@ async function resolveContext(db: Db) {
     .where(eq(appTenantEntitlements.tenantId, tenant.id))
     .limit(1);
   const retentionDays = entitlement?.rawHistoryRetentionDays ?? null;
-  return { tenant, channel, retentionDays };
+  // v2: agent_id is DERIVED "<tenantId>:<channelId>" (not a stored literal).
+  const agentId = deriveExpectedAgentId(channel.tenantId, channel.id);
+  return { tenant, channel, retentionDays, agentId };
 }
 
 /**
@@ -64,12 +66,18 @@ async function resolveContext(db: Db) {
  * transcript, so first paint does not wait on transcript work. Fully masked, serializable.
  */
 export async function getConversationList(db: Db, pool: Pool): Promise<ConversationListPayload> {
-  const { tenant, channel, retentionDays } = await resolveContext(db);
+  const { tenant, channel, retentionDays, agentId } = await resolveContext(db);
 
   const conversations = await db
     .select()
     .from(appConversations)
-    .where(and(eq(appConversations.tenantId, tenant.id), eq(appConversations.channelId, channel.id)));
+    .where(
+      and(
+        eq(appConversations.tenantId, tenant.id),
+        eq(appConversations.channelId, channel.id),
+        ne(appConversations.status, "archived") // exclude retired (archived) conversations
+      )
+    );
 
   // Cheap turn counts: the DB computes jsonb_array_length(runs); only ints cross the wire.
   const turnRows = await pool.query<{ session_id: string; turns: number | string | null }>(
@@ -79,7 +87,7 @@ export async function getConversationList(db: Db, pool: Pool): Promise<Conversat
             ) as turns
        from ai.agno_sessions
       where agent_id = $1`,
-    [channel.sourceAgentId ?? AGENT_FALLBACK]
+    [agentId]
   );
   const turnsBySession = new Map(turnRows.rows.map((r) => [String(r.session_id), Number(r.turns) || 0]));
   const turnCountById = new Map(
@@ -119,7 +127,7 @@ export async function getConversationTranscript(
   conversationId: string
 ): Promise<TranscriptPayload | null> {
   if (!UUID_RE.test(conversationId)) return null;
-  const { tenant, channel, retentionDays } = await resolveContext(db);
+  const { tenant, channel, retentionDays, agentId } = await resolveContext(db);
 
   const [conv] = await db
     .select()
@@ -140,7 +148,7 @@ export async function getConversationTranscript(
        from ai.agno_sessions
       where session_id = $1 and agent_id = $2
       limit 1`,
-    [conv.agnoSessionId, channel.sourceAgentId ?? AGENT_FALLBACK]
+    [conv.agnoSessionId, agentId]
   );
   const row = res.rows[0] as
     | { runs: unknown; created_at: number | string | null; updated_at: number | string | null }

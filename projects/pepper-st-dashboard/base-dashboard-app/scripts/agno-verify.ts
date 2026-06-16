@@ -55,9 +55,63 @@ async function main() {
   console.log(`conversations synced : ${conv.rows[0].n}`);
   console.log(`customers synced     : ${customers.rows[0].n}`);
   console.log(`identities synced    : ${identities.rows[0].n}`);
+  // v2 is 1 identity : N conversations (a contact/user_id may own many sessions), so the strict v1
+  // 1:1 invariant no longer holds. Every conversation must still resolve to an identity.
   check(
-    "one identity per conversation (1:1 in Phase 1)",
-    conv.rows[0].n === identities.rows[0].n && customers.rows[0].n === identities.rows[0].n
+    "1 identity : N conversations (identities <= conversations, customers <= identities)",
+    identities.rows[0].n <= conv.rows[0].n && customers.rows[0].n <= identities.rows[0].n
+  );
+  const nullIdentity = await pool.query<{ n: number }>(
+    "select count(*)::int n from dashboard.app_conversations c join dashboard.app_tenants t on t.id = c.tenant_id where t.slug = 'pepper-st' and c.customer_identity_id is null"
+  );
+  check("no conversation is missing its customer_identity_id", nullIdentity.rows[0].n === 0);
+
+  // ---- v2 live-coverage: agent_id is DERIVED "<tenant_id>:<channel_id>" (computed in SQL). This
+  // catches the Gate 10 drift that the old structural checks PASSED right through. ----
+  const coverage = await pool.query<{
+    live_sessions: number;
+    mapped: number;
+    archived: number;
+    orphans: number;
+  }>(
+    `with ch as (
+       select ch.id as channel_id, (t.id::text || ':' || ch.id::text) as agent_id
+         from dashboard.app_channels ch
+         join dashboard.app_tenants t on t.id = ch.tenant_id
+        where t.slug = 'pepper-st' and ch.channel_key = 'whatsapp-main'
+     )
+     select
+       (select count(*)::int from ai.agno_sessions s, ch where s.agent_id = ch.agent_id) as live_sessions,
+       (select count(*)::int
+          from dashboard.app_conversations c
+          join ch on ch.channel_id = c.channel_id
+          join ai.agno_sessions s on s.session_id = c.agno_session_id and s.agent_id = ch.agent_id) as mapped,
+       (select count(*)::int
+          from dashboard.app_conversations c
+          join ch on ch.channel_id = c.channel_id
+          where c.status = 'archived') as archived,
+       (select count(*)::int
+          from dashboard.app_conversations c
+          join ch on ch.channel_id = c.channel_id
+          where c.status <> 'archived'
+            and not exists (
+              select 1 from ai.agno_sessions s
+               where s.session_id = c.agno_session_id and s.agent_id = ch.agent_id)) as orphans`
+  );
+  const cov = coverage.rows[0];
+  console.log(`live sessions (derived agent_id) : ${cov.live_sessions}`);
+  console.log(`mapped conversations             : ${cov.mapped}`);
+  console.log(`archived (retired) conversations : ${cov.archived}`);
+  console.log(`active orphan conversations      : ${cov.orphans}`);
+  check(
+    "no ACTIVE orphan conversations (archived rows are intentionally excluded)",
+    Number(cov.orphans) === 0,
+    `orphans=${cov.orphans} archived=${cov.archived}`
+  );
+  check(
+    "live sessions are actually mapped (no 0-coverage drift)",
+    Number(cov.live_sessions) === 0 || Number(cov.mapped) > 0,
+    `live=${cov.live_sessions} mapped=${cov.mapped}`
   );
 
   const tables = await pool.query<{ table_name: string }>(

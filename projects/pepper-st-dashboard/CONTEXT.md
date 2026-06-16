@@ -7,11 +7,21 @@
 
 - **Project:** `pepper-st-dashboard`
 - **Status:** Phase 1 — Slices 0–7C built (dense real-data **Dashboard** [KPIs + charts + recent], Chat Monitor [lazy-loaded `○ Static` shell, full-height workspace], Analytics report [two real charts]; full-page SaaS layout, real-data only, no document scroll)
-- **Last updated:** 2026-06-15
-- **Stage:** Phase 1 build complete — read-only over Agno; migration applied + seeded; UI live.
-  **Gate 8 (acceptance) ✅ PASS** and **Gate 9 (deploy readiness) ✅ PASS** — recommended target:
-  self-host (Node/Docker) adjacent to the Agno PostgreSQL; not yet deployed (awaiting approval). See
-  `docs/deployment/01-deploy-readiness.md` + ADR-0010 (Proposed).
+- **Last updated:** 2026-06-16
+- **Stage:** Phase 1 build complete + **Slice 11B COMPLETE** (Agno v2 re-alignment executed: live data
+  restored — mapped 4 / active orphans 0 / **13 orphans archived**; all hardened verifiers + browser
+  smoke green). **Gate 8 ✅**, **Gate 9 ✅** (self-host adjacent to the Agno PostgreSQL), **Gate 10 ✅**,
+  **Gate 11A ✅ + ADR-0011 Accepted** (no schema migration; agent key **DERIVED**
+  `<tenant_id>:<channel_id>`, contact = `user_id`, opaque `session_id`). **Gate 12 ✅ PASS** — full DB
+  re-analysis (vs the Jun-15 `ai`-only `pg_dump`) + product-behaviour gap review: DB + mapping logic
+  re-verified live, **no migration warranted**; found scale risks (no `agent_id` index on
+  `ai.agno_sessions`; per-request full-`runs` parse) and product gaps (cost/token depth, filter
+  responsiveness, real-time, WhatsApp-like chat paging). Hardening roadmap **12A–12G drafted, NOT
+  implemented**. **Deploy data-blocker cleared**; revisit deploy after the perf/real-time hardening
+  slices. Parser intact. See `docs/database/07-old-vs-current-db-comparison.md`,
+  `docs/architecture/08-dashboard-data-loading-and-realtime-strategy.md`,
+  `docs/product/05-dashboard-analytics-chat-gaps.md`,
+  `docs/phases/phase-1-post-acceptance-hardening.md`, ADR-0011; deploy docs `docs/deployment/`.
 - **Stack (locked):** Next.js + TypeScript + Tailwind + **shadcn/ui** (restyled to
   match the demo UI) + **Drizzle ORM** + PostgreSQL + **Zod**. Migrations via
   **Drizzle**; raw `pg` only as Drizzle's driver. See `docs/architecture/05-tech-stack.md`.
@@ -66,9 +76,10 @@ identified by a stable **`channel_key`** (uniqueness is `(tenant_id, channel_key
 **not** `(tenant_id, type)`) so a tenant can hold **more than one** WhatsApp
 channel later. A channel carries **source-mapping fields** that bind dashboard
 records to the upstream bot (`source_agent_id`, `source_team_id`,
-`external_business_id`, `external_phone_number_id`; Phase 1 sets only
-`source_agent_id`). For the demo, the Agno `agent_id = concierge` maps to the
-**PEPPER ST. → WhatsApp** channel.
+`external_business_id`, `external_phone_number_id`). The dashboard binds a session to a channel by **deriving** the Agno
+`agent_id = "${app_tenants.id}:${app_channels.id}"` (tenant-first; confirmed + live-verified) and
+matching it against `ai.agno_sessions.agent_id`. `source_agent_id` is an optional legacy cache only —
+the v1 literal `concierge` is obsolete.
 
 ### Customer (end customer)
 A **person who chats with the tenant's bot** — tenant-scoped. Stored in
@@ -82,8 +93,9 @@ In Phase 1, `external_contact_id` is the **WhatsApp phone number**.
 
 ### Conversation
 The dashboard's **mapping record** for one Agno session. Stored in
-`app_conversations`. **Phase 1 grain: one `ai.agno_sessions` row (per phone) =
-one rolling Conversation.** It holds `agno_session_id` (the link to Agno),
+`app_conversations`. **Grain: one `ai.agno_sessions` row (keyed by the opaque
+`session_id`) = one Conversation;** a single contact (`user_id`) may own **many** sessions
+(1 identity : N conversations). It holds `agno_session_id` (the link to Agno),
 `customer_identity_id` (the exact identity resolved during mapping), and cached
 timing (`first_at`, `last_at`) — **never** message bodies. Dashboard-owned
 `status` is one of `open`/`resolved`/`archived` (CHECK-constrained), and
@@ -92,10 +104,11 @@ timing (`first_at`, `last_at`) — **never** message bodies. Dashboard-owned
 not unique**. Per-visit / per-day splitting is **parked** (see roadmap).
 
 ### Agno Session
-A row in **`ai.agno_sessions`** (external, read-only to us). Its **`session_id`
-is currently the WhatsApp phone number** and is the table's global primary key.
-A session is a **rolling thread**: new turns append to `runs[]` and `updated_at`
-advances. We treat `session_id` as **sensitive** (it is PII).
+A row in **`ai.agno_sessions`** (external, read-only to us). Its **`session_id` is an opaque
+32-char token** (the table's primary key) — **no longer the phone**. The WhatsApp contact (phone,
+PII) is in **`user_id`**, and `agent_id` = `<tenant_id>:<channel_id>`. A session is a **rolling
+thread**: new turns append to `runs[]` and `updated_at` advances. We treat `user_id` (and any phone)
+as **sensitive PII** and mask it.
 
 ### Run
 One element of `ai.agno_sessions.runs[]` — a **single agent invocation/turn**:
@@ -120,14 +133,14 @@ Real usage data from `session_data.session_metrics`
 `cache_read_tokens`, `cost`). The only reliable "usage" signal available today.
 
 ### External Contact ID
-The contact's id on a channel. Phase 1: the WhatsApp phone (text). Stored on
-`app_customer_identities` and cached on `app_conversations`. **Never stored as a
-number; never assumed to start with `94`.**
+The contact's id on a channel: the WhatsApp phone (text), now sourced from
+**`ai.agno_sessions.user_id`**. Stored on `app_customer_identities` and cached on
+`app_conversations`. **Never stored as a number; never assumed to start with `94`; always masked.**
 
 ### Agno Session ID
-The value linking `app_conversations` → `ai.agno_sessions.session_id`. In Phase 1
-it equals the `external_contact_id` (both are the phone). They are modelled as
-**distinct fields** because they will diverge in production.
+The value linking `app_conversations` → `ai.agno_sessions.session_id` (the opaque 32-char token).
+It is **distinct from** `external_contact_id` (the contact phone, from `user_id`) — in v2 they have
+**diverged**: one contact (`user_id`) can own many `session_id`s.
 
 ### Tenant Entitlements
 The tenant's **current access/limits** configuration: `app_tenant_entitlements`
@@ -151,8 +164,9 @@ analytics detail is capped at `analytics_retention_days` (no rollup table yet). 
 a knob is `NULL`, that dimension is unlimited. **We never delete `ai.agno_sessions`.**
 
 ### Masking
-Phone numbers / `session_id` are **masked by default** in list views and logs
-(e.g. `94•••••815`). Full visibility is a **future admin-only** capability.
+Phone numbers (the contact `user_id`) are **masked by default** in list views and logs
+(e.g. `94•••••815`); the opaque `session_id` is never shown raw either. Full visibility is a
+**future admin-only** capability.
 
 ### Canonical Transcript
 The **single authoritative** record of a conversation's messages, **owned upstream**

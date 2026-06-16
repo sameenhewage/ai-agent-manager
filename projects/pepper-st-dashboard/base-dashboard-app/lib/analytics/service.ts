@@ -1,10 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import * as schema from "../db/schema";
 import { appChannels, appConversations, appTenantEntitlements } from "../db/schema";
 import { resolveCurrentTenant } from "../tenant/context";
 import { parseTranscript } from "../agno/parser";
+import { deriveExpectedAgentId } from "../agno/mapping";
 import type { AgnoSession } from "../agno/types";
 import { clampToRetention, DEFAULT_TIME_ZONE, resolveRange, type RangeKey } from "./ranges";
 import {
@@ -129,10 +130,16 @@ export async function getAnalyticsData(
   const conversations = await db
     .select()
     .from(appConversations)
-    .where(and(eq(appConversations.tenantId, tenant.id), eq(appConversations.channelId, channel.id)));
+    .where(
+      and(
+        eq(appConversations.tenantId, tenant.id),
+        eq(appConversations.channelId, channel.id),
+        ne(appConversations.status, "archived") // exclude retired (archived) conversations
+      )
+    );
 
   // READ-ONLY Agno read (runs + metrics), joined in memory by session id.
-  const rows = await readAnalyticsRows(pool, channel.sourceAgentId ?? "concierge");
+  const rows = await readAnalyticsRows(pool, deriveExpectedAgentId(channel.tenantId, channel.id));
   const rowById = new Map(rows.map((r) => [String(r.session_id), r]));
 
   const inputs: AnalyticsSessionInput[] = conversations.map((c) => {

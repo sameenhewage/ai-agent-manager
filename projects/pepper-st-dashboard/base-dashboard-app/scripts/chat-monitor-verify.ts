@@ -84,6 +84,7 @@ async function main() {
   // ---- TRANSCRIPT payloads (one fetch per conversation; parses ONE session each) ----
   let slowest = 0;
   let resolved = 0;
+  let nonEmpty = 0;
   let systemSeen = false;
   let toolSeen = false;
   let transcriptLeaks = 0;
@@ -93,12 +94,19 @@ async function main() {
     slowest = Math.max(slowest, Date.now() - tt);
     if (!tr) continue;
     resolved++;
+    if (tr.transcript.messages.length > 0) nonEmpty++;
     if (leaks(JSON.stringify(tr)).length > 0) transcriptLeaks++;
     if (tr.transcript.messages.some((m) => (m.sender as string) === "system")) systemSeen = true;
     if (tr.transcript.messages.some((m) => m.sender === "tool")) toolSeen = true;
   }
   console.log(`slowest single TRANSCRIPT: ${slowest}ms (parses ONE session)`);
+  console.log(`non-empty transcripts    : ${nonEmpty}/${resolved}`);
   check("every conversation transcript resolves", resolved === list.conversations.length);
+  check(
+    "at least one transcript carries real messages (catches stale-mapping / 0-coverage drift)",
+    list.conversations.length === 0 || nonEmpty > 0,
+    `nonEmpty=${nonEmpty}/${list.conversations.length}`
+  );
   check("no raw id leaks in any TRANSCRIPT payload", transcriptLeaks === 0);
   check("no system messages shown in transcripts", !systemSeen);
   check("no tool/debug messages shown in transcripts", !toolSeen);

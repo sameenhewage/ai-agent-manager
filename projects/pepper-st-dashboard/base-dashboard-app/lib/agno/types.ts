@@ -19,9 +19,10 @@ export interface AgnoRun {
 }
 
 export interface AgnoSession {
-  session_id: string; // currently the WhatsApp phone (PII)
+  session_id: string; // opaque 32-char token (v2) — NOT the phone
   session_type?: string | null;
-  agent_id?: string | null;
+  agent_id?: string | null; // composite "<tenantId>:<channelId>" (v2)
+  user_id?: string | null; // WhatsApp contact phone (v2, PII)
   runs?: AgnoRun[] | null;
   created_at?: number | null; // epoch seconds
   updated_at?: number | null; // epoch seconds

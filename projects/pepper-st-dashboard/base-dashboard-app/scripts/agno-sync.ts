@@ -1,5 +1,5 @@
 import { getDb, getPool, maskDbUrl } from "../lib/db/client";
-import { syncConcierge } from "../lib/agno/sync";
+import { syncAllActiveChannels } from "../lib/agno/sync";
 
 /**
  * Slice 4 — Agno -> dashboard mapping sync. Reads `ai.agno_sessions` READ-ONLY and
@@ -20,9 +20,9 @@ async function main() {
   console.log(`[agno:sync] ${maskDbUrl()}`);
   const db = getDb();
   const pool = getPool();
-  const result = await syncConcierge(db, pool);
-  // result is counts only — no PII.
-  console.log("[agno:sync] result:", JSON.stringify(result, null, 2));
+  const results = await syncAllActiveChannels(db, pool);
+  // results are counts only — no PII.
+  console.log("[agno:sync] results:", JSON.stringify(results, null, 2));
   await pool.end();
 }
 

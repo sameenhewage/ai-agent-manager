@@ -23,7 +23,8 @@ export const PEPPER_ST_SEED = {
     type: "whatsapp",
     channelKey: "whatsapp-main",
     displayName: "PEPPER ST. WhatsApp",
-    sourceAgentId: "concierge",
+    // v2: agent_id is DERIVED "<tenantId>:<channelId>"; source_agent_id is a legacy cache (unused for resolution).
+    sourceAgentId: null,
   },
   entitlement: {
     planCode: "enterprise",

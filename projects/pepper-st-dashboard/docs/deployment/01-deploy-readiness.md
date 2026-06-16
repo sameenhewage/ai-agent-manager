@@ -6,6 +6,17 @@
 - **Date:** 2026-06-15
 - **Status:** ✅ **READY to choose/deploy after approval** (no blockers). Nothing deployed; no
   production migration/seed run; `ai.*` untouched.
+  > **⚠ SUPERSEDED (2026-06-16, Gate 10/11A → RESOLVED in Slice 11B):** a data blocker was opened when
+  > the AI platform migrated Agno (`agent_id` → composite `<tenant_id>:<channel_id>`, phone → `user_id`,
+  > opaque `session_id`, 13 orphans → empty data). **Slice 11B implemented the fix** (derive the agent
+  > key; archive the 13 orphans; re-sync) and **restored live data** — mapped 4 / active orphans 0 /
+  > archived 13; all hardened verifiers + browser smoke green. **Gate 12 (2026-06-16)** re-verified DB +
+  > logic against live data and reviewed product behaviour — see `docs/database/07-old-vs-current-db-comparison.md`,
+  > `docs/architecture/08-dashboard-data-loading-and-realtime-strategy.md`,
+  > `docs/phases/phase-1-post-acceptance-hardening.md`. **The data blocker is cleared.** Remaining
+  > **pre-scale advisories** (not deploy blockers): `ai.agno_sessions` has no `agent_id` index, and
+  > analytics parses the full `runs` JSONB per request — address via the Gate 12 perf slice (12D) before
+  > high volume. The infrastructure/env/DB-access conclusions below remain valid.
 - **Related:** `docs/adr/0010-deployment-target.md` (Proposed), `docs/architecture/05-tech-stack.md`
   (open question #3 = deploy target), `docs/phases/phase-1.md` (Gate 8 PASS),
   `docs/changelog/technical-decision-log.md` (TD-063).

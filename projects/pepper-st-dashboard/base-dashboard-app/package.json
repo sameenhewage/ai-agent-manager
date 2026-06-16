@@ -21,7 +21,9 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:verify": "tsx scripts/verify.ts",
     "db:agno:inspect": "tsx scripts/agno-inspect.ts",
+    "db:agno:reconfirm": "tsx scripts/agno-reconfirm.ts",
     "db:agno:sync": "tsx scripts/agno-sync.ts",
+    "db:agno:archive-orphans": "tsx scripts/agno-archive-orphans.ts",
     "db:agno:verify": "tsx scripts/agno-verify.ts",
     "db:chat:verify": "tsx scripts/chat-monitor-verify.ts",
     "db:analytics:verify": "tsx scripts/analytics-verify.ts"
