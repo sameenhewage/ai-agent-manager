@@ -7,6 +7,7 @@ import { resolveCurrentTenant } from "../tenant/context";
 import { parseTranscript } from "../agno/parser";
 import { deriveExpectedAgentId } from "../agno/mapping";
 import { maskContactId } from "../agno/mask";
+import { DEFAULT_TIME_ZONE } from "../format/time";
 import type { AgnoSession, ParsedTranscript } from "../agno/types";
 import {
   buildConversationList,
@@ -220,6 +221,7 @@ export async function getConversationList(
   return {
     tenantName: tenant.name,
     channelLabel: channel.displayName ?? channel.channelKey,
+    timeZone: tenant.timezone || DEFAULT_TIME_ZONE,
     retentionDays,
     retentionLabel: retentionDays == null ? "Unlimited" : `${retentionDays} days`,
     conversations: items,

@@ -1,4 +1,5 @@
 import type { AnalyticsData } from "@/lib/analytics/service";
+import { fmtDateTime } from "../format/time";
 
 /**
  * Pure Dashboard presenter (Slice 7C). Shapes the headline KPI cards + chart series
@@ -80,20 +81,10 @@ const NF = new Intl.NumberFormat("en-US");
 const fmtInt = (n: number) => NF.format(Math.round(n));
 const fmtCost = (n: number) => `$${n.toFixed(4)}`;
 
-/** Absolute, tz-fixed timestamp (e.g. "Jun 15, 13:30"). Pure: no Date.now(). */
-export function fmtDateTime(iso: string | null, timeZone: string): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(d);
-}
+/** Absolute timestamp (e.g. "Jun 15, 7:00 PM") in the tenant timezone, 12-hour AM/PM.
+ *  Re-exported from the shared formatter (lib/format/time) so the Dashboard, Chat Monitor,
+ *  and Analytics all render the same instant identically. Pure: no Date.now(). */
+export { fmtDateTime };
 
 /**
  * Build the headline KPI cards from real totals. Returns exactly the metrics listed in

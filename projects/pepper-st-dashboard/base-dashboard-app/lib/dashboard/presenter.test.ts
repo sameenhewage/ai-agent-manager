@@ -137,11 +137,12 @@ describe("buildDashboardKpis", () => {
 });
 
 describe("fmtDateTime", () => {
-  it("renders an absolute, tz-fixed time and handles null", () => {
+  it("renders an absolute, tz-fixed time (12-hour AM/PM) and handles null", () => {
     expect(fmtDateTime(null, "Asia/Colombo")).toBe("—");
     expect(fmtDateTime("not-a-date", "Asia/Colombo")).toBe("—");
-    // 13:30 UTC = 19:00 in Asia/Colombo (+5:30)
-    expect(fmtDateTime("2026-06-15T13:30:00.000Z", "Asia/Colombo")).toBe("Jun 15, 19:00");
+    // 13:30 UTC = 19:00 in Asia/Colombo (+5:30) = 7:00 PM — same AM/PM clock the Chat
+    // Monitor shows for this instant (shared lib/format/time formatter).
+    expect(fmtDateTime("2026-06-15T13:30:00.000Z", "Asia/Colombo")).toBe("Jun 15, 7:00 PM");
   });
 });
 

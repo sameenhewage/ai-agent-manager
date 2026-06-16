@@ -230,6 +230,9 @@ export function buildTranscriptView(
 export interface ConversationListPayload {
   tenantName: string;
   channelLabel: string;
+  /** Tenant IANA timezone (e.g. "Asia/Colombo"). The client formats every chat timestamp
+   *  in this zone so the Chat Monitor matches the Dashboard/Analytics exactly. */
+  timeZone: string;
   retentionDays: number | null;
   retentionLabel: string;
   conversations: ConversationListItem[];

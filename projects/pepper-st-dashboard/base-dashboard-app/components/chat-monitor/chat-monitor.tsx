@@ -20,6 +20,14 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { messageAlignment, primaryContactLabel } from "@/lib/chat-monitor/presenter";
+import {
+  DEFAULT_TIME_ZONE,
+  dayKey,
+  fmtClock,
+  fmtDayLabel,
+  fmtFullStamp,
+  fmtListStamp,
+} from "@/lib/format/time";
 import type {
   ConversationListItem,
   ConversationListPayload,
@@ -61,62 +69,9 @@ type ChatState =
 // initial open and every scroll-up request the latest/older 20 messages — never the whole chat.
 const CHAT_MESSAGE_PAGE_SIZE = 20;
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MONTHS_LONG = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-const pad = (n: number) => String(n).padStart(2, "0");
-const dayKeyUTC = (d: Date) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-
-function fmtFull(iso: string | null): string {
-  if (!iso) return "Unknown";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "Unknown";
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${pad(
-    d.getUTCHours()
-  )}:${pad(d.getUTCMinutes())} UTC`;
-}
-
-/** WhatsApp-style clock, e.g. "4:51 AM". Deterministic (UTC) to avoid hydration drift. */
-function fmtClock(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  let h = d.getUTCHours();
-  const m = pad(d.getUTCMinutes());
-  const ampm = h >= 12 ? "PM" : "AM";
-  h %= 12;
-  if (h === 0) h = 12;
-  return `${h}:${m} ${ampm}`;
-}
-
-/** Centered date-separator label: Today / Yesterday / "16 June 2026" (UTC, client-rendered). */
-function fmtDayLabel(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  const yd = new Date(now.getTime() - 86_400_000);
-  const k = dayKeyUTC(d);
-  if (k === dayKeyUTC(now)) return "Today";
-  if (k === dayKeyUTC(yd)) return "Yesterday";
-  return `${d.getUTCDate()} ${MONTHS_LONG[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-}
-
-/** Compact list timestamp (WhatsApp): time today, "Yesterday", short date this year, else m/d/yy. */
-function fmtListStamp(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  const yd = new Date(now.getTime() - 86_400_000);
-  const k = dayKeyUTC(d);
-  if (k === dayKeyUTC(now)) return fmtClock(iso);
-  if (k === dayKeyUTC(yd)) return "Yesterday";
-  if (d.getUTCFullYear() === now.getUTCFullYear()) return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
-  return `${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())}/${String(d.getUTCFullYear()).slice(2)}`;
-}
+// Date/time formatting (tenant timezone, 12-hour AM/PM) lives in the shared lib/format/time
+// module so the Chat Monitor renders every timestamp identically to the Dashboard/Analytics
+// (no more hardcoded-UTC drift). The tenant `timeZone` is threaded down from the list payload.
 
 /** Stable per-contact avatar colour (deterministic from a seed) + clean initials. */
 const AVATAR_COLORS = ["#e17076", "#7bc862", "#65aadd", "#a695e7", "#ee7aae", "#6ec9cb", "#f3a85b", "#ef9a9a"];
@@ -282,6 +237,9 @@ export function ChatMonitor() {
   }
 
   const conversations = list.status === "ready" ? list.data.conversations : [];
+  // Tenant timezone for ALL chat timestamps (matches Dashboard/Analytics). Falls back to the
+  // canonical default until the list payload (which carries it) has loaded.
+  const timeZone = list.status === "ready" ? list.data.timeZone : DEFAULT_TIME_ZONE;
   const selected = conversations.find((c) => c.id === selectedId) ?? null;
   const selectedChat = selectedId ? chats[selectedId] : undefined;
 
@@ -351,6 +309,7 @@ export function ChatMonitor() {
                 <ConversationRow
                   key={c.id}
                   conversation={c}
+                  timeZone={timeZone}
                   active={selected?.id === c.id}
                   onClick={() => openConversation(c.id)}
                 />
@@ -378,6 +337,7 @@ export function ChatMonitor() {
           <ConversationDetail
             key={selected.id}
             item={selected}
+            timeZone={timeZone}
             chat={selectedChat}
             onBack={() => setMobileView("list")}
             onRetry={() => {
@@ -409,10 +369,12 @@ function ConversationRow({
   conversation,
   active,
   onClick,
+  timeZone,
 }: {
   conversation: ConversationListItem;
   active: boolean;
   onClick: () => void;
+  timeZone: string;
 }) {
   return (
     <button
@@ -436,7 +398,7 @@ function ConversationRow({
             {primaryContactLabel(conversation)}
           </span>
           <span className="shrink-0 text-[11px] text-faint">
-            {fmtListStamp(conversation.lastMessageAt ?? conversation.lastAt)}
+            {fmtListStamp(conversation.lastMessageAt ?? conversation.lastAt, timeZone)}
           </span>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
@@ -487,12 +449,14 @@ function ConversationDetail({
   onBack,
   onRetry,
   onLoadOlder,
+  timeZone,
 }: {
   item: ConversationListItem;
   chat: ChatState | undefined;
   onBack: () => void;
   onRetry: () => void;
   onLoadOlder: () => void;
+  timeZone: string;
 }) {
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const didInitialScroll = React.useRef(false);
@@ -591,7 +555,7 @@ function ConversationDetail({
             {primaryContactLabel(item)}
           </div>
           <div className="truncate text-[11.5px] leading-tight text-muted">
-            last seen {fmtFull(item.lastAt)}
+            last seen {fmtFullStamp(item.lastAt, timeZone)}
           </div>
         </div>
         <Badge variant="wa">WhatsApp</Badge>
@@ -655,12 +619,12 @@ function ConversationDetail({
                 !!m.createdAt &&
                 (!prev ||
                   !prev.createdAt ||
-                  dayKeyUTC(new Date(prev.createdAt)) !== dayKeyUTC(new Date(m.createdAt)));
+                  dayKey(prev.createdAt, timeZone) !== dayKey(m.createdAt, timeZone));
               const grouped = !!prev && !showDay && prev.role === m.role;
               return (
                 <React.Fragment key={m.id}>
-                  {showDay ? <DateSeparator label={fmtDayLabel(m.createdAt)} /> : null}
-                  <MessageBubble id={m.id} role={m.role} text={m.text} createdAt={m.createdAt} grouped={grouped} />
+                  {showDay ? <DateSeparator label={fmtDayLabel(m.createdAt, timeZone)} /> : null}
+                  <MessageBubble id={m.id} role={m.role} text={m.text} createdAt={m.createdAt} grouped={grouped} timeZone={timeZone} />
                 </React.Fragment>
               );
             })}
@@ -668,7 +632,7 @@ function ConversationDetail({
         )}
       </div>
 
-      <ReadOnlyComposer turnCount={item.turnCount} lastActivity={fmtFull(item.lastAt)} />
+      <ReadOnlyComposer turnCount={item.turnCount} lastActivity={fmtFullStamp(item.lastAt, timeZone)} />
     </>
   );
 }
@@ -679,12 +643,14 @@ function MessageBubble({
   text,
   createdAt,
   grouped,
+  timeZone,
 }: {
   id: string;
   role: "customer" | "assistant";
   text: string;
   createdAt: string | null;
   grouped: boolean;
+  timeZone: string;
 }) {
   // customer → LEFT (incoming), assistant → RIGHT (outgoing). Full-width row, never centered.
   const { row, outgoing } = messageAlignment(role);
@@ -705,7 +671,7 @@ function MessageBubble({
           className="float-right ml-2 mt-1 inline-flex translate-y-0.5 select-none items-center gap-0.5 text-[10px] leading-none"
           style={{ color: "var(--wa-bubble-meta)" }}
         >
-          {fmtClock(createdAt)}
+          {fmtClock(createdAt, timeZone)}
           {outgoing ? <CheckCheck className="size-3" style={{ color: "var(--wa-tick)" }} /> : null}
         </span>
         <span className="whitespace-pre-wrap break-words">{text}</span>

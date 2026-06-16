@@ -5,7 +5,10 @@
  * No DB, no Date.now() side effects (injectable `now`) — fully testable.
  */
 
-export const DEFAULT_TIME_ZONE = "Asia/Colombo";
+// Canonical tenant zone lives in lib/format/time.ts (single source of truth). Re-exported
+// here so existing analytics callers keep their `./ranges` import unchanged.
+import { DEFAULT_TIME_ZONE } from "../format/time";
+export { DEFAULT_TIME_ZONE };
 const DAY_MS = 86_400_000;
 
 export type RangeKey = "today" | "3d" | "7d" | "14d" | "30d" | "this_month" | "custom";
