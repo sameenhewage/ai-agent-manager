@@ -125,6 +125,38 @@ describe("parseTranscript", () => {
     expect(t.lastActivityAt?.getTime()).toBe(202 * 1000);
   });
 
+  // Business-Truth (CONTEXT.md §7): "displayable messages" = user + assistant-with-content.
+  // Tool-call-only / internal assistant turns carry NO visible content and must not inflate
+  // the message count (they showed up as empty bot bubbles). turnCount (= runs.length) is
+  // unaffected — a tool-calling turn is still a turn.
+  it("excludes empty / tool-call-only ASSISTANT messages from displayable count", () => {
+    const s: AgnoSession = {
+      ...base,
+      runs: [
+        {
+          messages: [
+            msg("user", "u1", 101, "hi"),
+            msg("assistant", "a1", 102, ""), // tool-call-only -> no visible content
+            msg("assistant", "a2", 103, "   "), // whitespace-only -> no visible content
+            msg("assistant", "a3", 104, "real answer"),
+          ],
+        },
+      ],
+    };
+    const t = parseTranscript(s);
+    expect(t.messages.map((m) => m.id)).toEqual(["u1", "a3"]);
+    expect(t.messageCount).toBe(2);
+    expect(t.turnCount).toBe(1); // one run, regardless of empty bot turns
+  });
+
+  it("KEEPS an empty-content USER message (e.g. media-only) — only assistant empties drop", () => {
+    const s: AgnoSession = {
+      ...base,
+      runs: [{ messages: [msg("user", "u1", 101, ""), msg("assistant", "a1", 102, "hi")] }],
+    };
+    expect(parseTranscript(s).messages.map((m) => m.id)).toEqual(["u1", "a1"]);
+  });
+
   it("applies retention (NULL = unlimited; cutoff drops older messages)", () => {
     const now = new Date(1000 * 1000);
     expect(parseTranscript(base, { retentionDays: null, now }).messages).toHaveLength(4);

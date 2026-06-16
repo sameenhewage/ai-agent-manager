@@ -27,6 +27,7 @@ import { PendingSection } from "@/components/shell/pending-section";
 import { RefreshError } from "@/components/shell/refresh-error";
 import { useRangeData } from "@/components/shell/use-range-data";
 import type { AnalyticsData } from "@/lib/analytics/service";
+import { primaryContactLabel } from "@/lib/chat-monitor/presenter";
 import type { ConversationListItem } from "@/lib/chat-monitor/presenter";
 import {
   buildDashboardChartSeries,
@@ -144,6 +145,22 @@ export function Dashboard({
           <span>
             The selected range exceeds this tenant&rsquo;s analytics window ({data.retentionLabel}).
             Showing the in-window portion; older history needs rollups (not built yet).
+          </span>
+        </div>
+      ) : null}
+
+      {/* Business-Truth coverage (CONTEXT.md §7): never silently undercount. When valid live
+          sessions exist that are not in the mapped universe, say so instead of hiding them. */}
+      {!data.coverage.complete ? (
+        <div className="flex items-start gap-2 rounded-lg border border-warn bg-warn-weak px-4 py-2.5 text-[12.5px] text-text">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" />
+          <span>
+            Showing <span className="font-semibold">{data.coverage.mapped}</span> of{" "}
+            <span className="font-semibold">{data.coverage.liveValid}</span> live sessions for this
+            range. <span className="font-semibold">{data.coverage.excludedCount}</span> valid
+            session(s) are not yet in the dashboard index (run{" "}
+            <span className="font-mono">db:agno:sync</span> to map them); metrics below count the
+            mapped sessions only.
           </span>
         </div>
       ) : null}
@@ -275,10 +292,18 @@ export function Dashboard({
                       <MessagesSquare className="size-4" />
                     </span>
                     <div className="min-w-0">
-                      <div className="truncate font-mono text-[13px] font-semibold text-text">
-                        {c.maskedContact}
+                      <div
+                        className={cn(
+                          "truncate text-[13px] font-semibold text-text",
+                          !c.displayName && "font-mono"
+                        )}
+                      >
+                        {primaryContactLabel(c)}
                       </div>
                       <div className="text-[11.5px] text-faint">
+                        {c.displayName ? (
+                          <span className="font-mono">{c.maskedContact} · </span>
+                        ) : null}
                         {c.turnCount} {c.turnCount === 1 ? "turn" : "turns"}
                       </div>
                     </div>

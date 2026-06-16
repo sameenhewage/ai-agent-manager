@@ -8,6 +8,7 @@ import { deriveExpectedAgentId } from "../agno/mapping";
 import { clampToRetention, DEFAULT_TIME_ZONE, resolveRange, type RangeKey } from "./ranges";
 import { aggregateAnalytics, type AnalyticsTotals, type DailyPoint } from "./aggregate";
 import { buildAnalyticsInputs, collectSessionIds, type SessionMetricsRow } from "./universe";
+import { computeUniverseCoverage, type UniverseCoverage } from "./coverage";
 
 /**
  * Server-side Analytics data flow (Slice 6). Universe = the tenant/channel's MAPPED
@@ -40,6 +41,10 @@ export interface AnalyticsData {
   requestedFromISO: string | null; // original (pre-clamp) lower bound when clamped
   totals: AnalyticsTotals;
   series: DailyPoint[];
+  // Business-Truth universe coverage (CONTEXT.md §7): how many VALID LIVE sessions exist for
+  // this range vs. how many are actually counted (active mapped), with masked, reasoned
+  // exclusions for the rest. Never hides an unmapped session.
+  coverage: UniverseCoverage;
 }
 
 export interface GetAnalyticsParams {
@@ -75,6 +80,32 @@ async function readSessionMetricsByIds(
     [sessionIds, agentId]
   );
   return res.rows as SessionMetricsRow[];
+}
+
+/**
+ * READ-ONLY: session_ids of VALID LIVE sessions under the agent in [from, to) — i.e. a
+ * derivable contact (`user_id`) and `updated_at` within the range. This is the
+ * source-of-truth universe the dashboard SHOULD account for; comparing it to the mapped
+ * universe yields the coverage/exclusions. Only SELECT; never mutates `ai.*`.
+ */
+async function readLiveValidSessionIds(
+  pool: Pool,
+  agentId: string,
+  from: Date,
+  to: Date
+): Promise<string[]> {
+  const res = await pool.query(
+    // `updated_at` is epoch SECONDS stored as bigint; compare as double precision so the
+    // fractional range bounds (e.g. `to = now`) don't fail a bigint cast.
+    `select session_id
+       from ai.agno_sessions
+      where agent_id = $1
+        and user_id is not null and user_id <> ''
+        and updated_at is not null
+        and updated_at >= $2::double precision and updated_at < $3::double precision`,
+    [agentId, from.getTime() / 1000, to.getTime() / 1000]
+  );
+  return res.rows.map((r) => String(r.session_id));
 }
 
 export async function getAnalyticsData(
@@ -148,6 +179,27 @@ export async function getAnalyticsData(
 
   const { totals, series } = aggregateAnalytics(inputs, { from, to, timeZone });
 
+  // Business-Truth coverage (CONTEXT.md §7): reconcile the COUNTED (active mapped) universe
+  // against the VALID LIVE sessions for this range, so unmapped/unsynced sessions are
+  // surfaced as explicit, masked exclusions instead of being silently dropped. READ-ONLY.
+  const agentId = deriveExpectedAgentId(channel.tenantId, channel.id);
+  const archivedRows = await db
+    .select({ sid: appConversations.agnoSessionId })
+    .from(appConversations)
+    .where(
+      and(
+        eq(appConversations.tenantId, tenant.id),
+        eq(appConversations.channelId, channel.id),
+        eq(appConversations.status, "archived")
+      )
+    );
+  const liveValidSessionIds = await readLiveValidSessionIds(pool, agentId, from, to);
+  const coverage = computeUniverseCoverage({
+    liveValidSessionIds,
+    activeMappedSessionIds: sessionIds,
+    archivedSessionIds: archivedRows.map((r) => r.sid),
+  });
+
   return {
     tenantName: tenant.name,
     channelLabel: channel.displayName ?? channel.channelKey,
@@ -164,5 +216,6 @@ export async function getAnalyticsData(
     requestedFromISO,
     totals,
     series,
+    coverage,
   };
 }

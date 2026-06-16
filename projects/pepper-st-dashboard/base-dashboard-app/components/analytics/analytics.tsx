@@ -225,6 +225,22 @@ export function Analytics({
         </div>
       ) : null}
 
+      {/* Business-Truth coverage (CONTEXT.md §7): surface valid live sessions that are not yet
+          mapped instead of silently undercounting. */}
+      {!data.coverage.complete ? (
+        <div className="flex items-start gap-2 rounded-lg border border-warn bg-warn-weak px-4 py-2.5 text-[12.5px] text-text">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" />
+          <span>
+            Showing <span className="font-semibold">{data.coverage.mapped}</span> of{" "}
+            <span className="font-semibold">{data.coverage.liveValid}</span> live sessions for this
+            range. <span className="font-semibold">{data.coverage.excludedCount}</span> valid
+            session(s) are not yet in the dashboard index (run{" "}
+            <span className="font-mono">db:agno:sync</span> to map them); totals count the mapped
+            sessions only.
+          </span>
+        </div>
+      ) : null}
+
       {/* KPI cards */}
       <h2 className="-mb-1 text-[11px] font-bold uppercase tracking-[0.09em] text-faint">
         Overview &middot; {data.range.label}

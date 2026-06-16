@@ -10,6 +10,11 @@
 > `ai.agno_sessions.user_id`); the session/transcript source is AI-owned (`ai.agno_sessions` and
 > `ai.agno_sessions.runs`). The dashboard duplicates **neither**. **Do not reintroduce a dashboard-side
 > customer/identity model.** Sections §4–§5 below are **historical** (pre-11B drift) — see the banner.
+>
+> **Scope note (Gate V2-DOCS, 2026-06-16):** this file documents the **dashboard-owned
+> schema only**. For the **full app DB dependencies** — including the AI-owned `ai.*` tables
+> the app reads (`ai.agno_sessions`, `ai.customers`, `ai.agno_metrics`) — see
+> [`docs/v2/01-database-inventory.md`](../v2/01-database-inventory.md).
 
 - **Owner:** this app. Schema `dashboard` is the only schema the dashboard writes (via
   `drizzle-kit migrate` + the seed/sync scripts). It stores **mapping + organisation metadata only**

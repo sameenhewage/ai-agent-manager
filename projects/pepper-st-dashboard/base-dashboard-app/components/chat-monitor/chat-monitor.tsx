@@ -3,25 +3,32 @@
 import * as React from "react";
 import {
   ArrowLeft,
-  Bot,
-  Clock,
-  Hash,
+  CheckCheck,
   Inbox,
+  Loader2,
   Lock,
-  MessageSquare,
   MessagesSquare,
+  Mic,
+  Plus,
   RefreshCw,
+  Search,
+  Smile,
   TriangleAlert,
   User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { messageAlignment, primaryContactLabel } from "@/lib/chat-monitor/presenter";
 import type {
   ConversationListItem,
   ConversationListPayload,
-  TranscriptPayload,
 } from "@/lib/chat-monitor/presenter";
+import type {
+  ChatMessageDto,
+  ConversationMessagesPageDto,
+  ConversationMessagesState,
+} from "@/lib/chat-monitor/message-pagination";
 
 /**
  * Chat Monitor (Slice 7) — CLIENT component. The page shell paints instantly; this
@@ -35,21 +42,29 @@ type ListState =
   | { status: "error"; message: string }
   | { status: "ready"; data: ConversationListPayload };
 
-type TranscriptState =
+/** Per-conversation chat panel state: the loaded message PAGE(s) + cursor, never the list. */
+type ChatState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; data: TranscriptPayload };
+  | {
+      status: "ready";
+      messages: ChatMessageDto[];
+      hasMoreBefore: boolean;
+      beforeCursor: string | null;
+      state: ConversationMessagesState;
+      loadingOlder: boolean;
+    };
+
+const PAGE_SIZE = 50;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_LONG = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 const pad = (n: number) => String(n).padStart(2, "0");
+const dayKeyUTC = (d: Date) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 
-/** Deterministic UTC formatting (same on server + client) to avoid hydration drift. */
-function fmtShort(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
-}
 function fmtFull(iso: string | null): string {
   if (!iso) return "Unknown";
   const d = new Date(iso);
@@ -59,33 +74,147 @@ function fmtFull(iso: string | null): string {
   )}:${pad(d.getUTCMinutes())} UTC`;
 }
 
+/** WhatsApp-style clock, e.g. "4:51 AM". Deterministic (UTC) to avoid hydration drift. */
+function fmtClock(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  let h = d.getUTCHours();
+  const m = pad(d.getUTCMinutes());
+  const ampm = h >= 12 ? "PM" : "AM";
+  h %= 12;
+  if (h === 0) h = 12;
+  return `${h}:${m} ${ampm}`;
+}
+
+/** Centered date-separator label: Today / Yesterday / "16 June 2026" (UTC, client-rendered). */
+function fmtDayLabel(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const yd = new Date(now.getTime() - 86_400_000);
+  const k = dayKeyUTC(d);
+  if (k === dayKeyUTC(now)) return "Today";
+  if (k === dayKeyUTC(yd)) return "Yesterday";
+  return `${d.getUTCDate()} ${MONTHS_LONG[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+/** Compact list timestamp (WhatsApp): time today, "Yesterday", short date this year, else m/d/yy. */
+function fmtListStamp(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const yd = new Date(now.getTime() - 86_400_000);
+  const k = dayKeyUTC(d);
+  if (k === dayKeyUTC(now)) return fmtClock(iso);
+  if (k === dayKeyUTC(yd)) return "Yesterday";
+  if (d.getUTCFullYear() === now.getUTCFullYear()) return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+  return `${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())}/${String(d.getUTCFullYear()).slice(2)}`;
+}
+
+/** Stable per-contact avatar colour (deterministic from a seed) + clean initials. */
+const AVATAR_COLORS = ["#e17076", "#7bc862", "#65aadd", "#a695e7", "#ee7aae", "#6ec9cb", "#f3a85b", "#ef9a9a"];
+function avatarColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function avatarInitials(name: string): string {
+  const out: string[] = [];
+  for (const w of name.trim().split(/\s+/).filter(Boolean)) {
+    const ch = [...w].find((c) => /[\p{L}\p{N}]/u.test(c));
+    if (ch) out.push(ch.toUpperCase());
+    if (out.length >= 2) break;
+  }
+  return out.join("") || "#";
+}
+
 export function ChatMonitor() {
   const [list, setList] = React.useState<ListState>({ status: "loading" });
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [mobileView, setMobileView] = React.useState<"list" | "detail">("list");
-  const [transcripts, setTranscripts] = React.useState<Record<string, TranscriptState>>({});
+  const [chats, setChats] = React.useState<Record<string, ChatState>>({});
+  const [query, setQuery] = React.useState("");
 
-  const transcriptsRef = React.useRef(transcripts);
+  const chatsRef = React.useRef(chats);
   React.useEffect(() => {
-    transcriptsRef.current = transcripts;
-  }, [transcripts]);
+    chatsRef.current = chats;
+  }, [chats]);
 
-  const loadTranscript = React.useCallback(async (id: string, force = false) => {
-    const cur = transcriptsRef.current[id];
+  // Load the LATEST page of messages for a conversation. Touches ONLY this chat panel's
+  // state — the conversation list is never refetched or reset when switching chats.
+  const loadChat = React.useCallback(async (id: string, force = false) => {
+    const cur = chatsRef.current[id];
     if (!force && cur && cur.status === "ready") return; // cached
-    setTranscripts((prev) => ({ ...prev, [id]: { status: "loading" } }));
+    setChats((prev) => ({ ...prev, [id]: { status: "loading" } }));
     try {
-      const res = await fetch(`/api/chat-monitor/conversations/${id}/transcript`, {
+      const res = await fetch(`/api/chat-monitor/conversations/${id}/transcript?limit=${PAGE_SIZE}`, {
         cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: TranscriptPayload = await res.json();
-      setTranscripts((prev) => ({ ...prev, [id]: { status: "ready", data } }));
+      const data: ConversationMessagesPageDto = await res.json();
+      setChats((prev) => ({
+        ...prev,
+        [id]: {
+          status: "ready",
+          messages: data.messages,
+          hasMoreBefore: data.hasMoreBefore,
+          beforeCursor: data.beforeCursor,
+          state: data.state,
+          loadingOlder: false,
+        },
+      }));
     } catch (e) {
-      setTranscripts((prev) => ({
+      setChats((prev) => ({
         ...prev,
         [id]: { status: "error", message: e instanceof Error ? e.message : "Failed to load" },
       }));
+    }
+  }, []);
+
+  // Fetch the previous (older) page via the opaque cursor and PREPEND it (de-duped). The
+  // list and the already-loaded messages stay put; the panel keeps the reading position.
+  const loadOlder = React.useCallback(async (id: string) => {
+    const cur = chatsRef.current[id];
+    if (!cur || cur.status !== "ready" || cur.loadingOlder || !cur.hasMoreBefore || !cur.beforeCursor) {
+      return;
+    }
+    setChats((prev) => {
+      const c = prev[id];
+      return c && c.status === "ready" ? { ...prev, [id]: { ...c, loadingOlder: true } } : prev;
+    });
+    try {
+      const res = await fetch(
+        `/api/chat-monitor/conversations/${id}/transcript?limit=${PAGE_SIZE}&before=${encodeURIComponent(
+          cur.beforeCursor
+        )}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: ConversationMessagesPageDto = await res.json();
+      setChats((prev) => {
+        const c = prev[id];
+        if (!c || c.status !== "ready") return prev;
+        const seen = new Set(c.messages.map((m) => m.id));
+        const older = data.messages.filter((m) => !seen.has(m.id)); // never duplicate
+        return {
+          ...prev,
+          [id]: {
+            ...c,
+            messages: [...older, ...c.messages],
+            hasMoreBefore: data.hasMoreBefore,
+            beforeCursor: data.beforeCursor,
+            loadingOlder: false,
+          },
+        };
+      });
+    } catch {
+      setChats((prev) => {
+        const c = prev[id];
+        return c && c.status === "ready" ? { ...prev, [id]: { ...c, loadingOlder: false } } : prev;
+      });
     }
   }, []);
 
@@ -98,11 +227,11 @@ export function ChatMonitor() {
       setList({ status: "ready", data });
       const first = data.conversations[0]?.id ?? null;
       setSelectedId((prev) => prev ?? first);
-      if (first) loadTranscript(first);
+      if (first) loadChat(first);
     } catch (e) {
       setList({ status: "error", message: e instanceof Error ? e.message : "Failed to load" });
     }
-  }, [loadTranscript]);
+  }, [loadChat]);
 
   React.useEffect(() => {
     loadList();
@@ -111,12 +240,22 @@ export function ChatMonitor() {
   function openConversation(id: string) {
     setSelectedId(id);
     setMobileView("detail");
-    loadTranscript(id);
+    loadChat(id);
   }
 
   const conversations = list.status === "ready" ? list.data.conversations : [];
   const selected = conversations.find((c) => c.id === selectedId) ?? null;
-  const selectedTranscript = selectedId ? transcripts[selectedId] : undefined;
+  const selectedChat = selectedId ? chats[selectedId] : undefined;
+
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? conversations.filter(
+        (c) =>
+          (c.displayName ?? "").toLowerCase().includes(q) ||
+          c.maskedContact.toLowerCase().includes(q) ||
+          (c.lastMessagePreview ?? "").toLowerCase().includes(q)
+      )
+    : conversations;
 
   return (
     <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-[340px_1fr]">
@@ -127,17 +266,30 @@ export function ChatMonitor() {
           mobileView === "detail" && "hidden lg:flex"
         )}
       >
-        <CardHeader className="flex-col items-start gap-1">
-          <CardTitle>
-            <Inbox className="text-accent" /> Conversations
-          </CardTitle>
-          <CardDescription>
-            {list.status === "ready"
-              ? `${conversations.length} in window · ${list.data.channelLabel} · retention ${list.data.retentionLabel}`
-              : list.status === "loading"
-                ? "Loading\u2026"
-                : "Couldn\u2019t load"}
-          </CardDescription>
+        <CardHeader className="flex-col items-stretch gap-2.5">
+          <div className="flex flex-col gap-1">
+            <CardTitle>
+              <Inbox className="text-accent" /> Conversations
+            </CardTitle>
+            <CardDescription>
+              {list.status === "ready"
+                ? `${conversations.length} in window · ${list.data.channelLabel} · retention ${list.data.retentionLabel}`
+                : list.status === "loading"
+                  ? "Loading\u2026"
+                  : "Couldn\u2019t load"}
+            </CardDescription>
+          </div>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or message"
+              aria-label="Search conversations"
+              className="w-full rounded-full border border-line bg-panel2 py-1.5 pl-8 pr-3 text-[12.5px] text-text outline-none placeholder:text-faint focus:border-accent-line"
+            />
+          </div>
         </CardHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -150,9 +302,14 @@ export function ChatMonitor() {
               <MessagesSquare className="size-6 text-faint" />
               <p className="text-[13px] text-muted">No conversations yet.</p>
             </div>
+          ) : visible.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
+              <Search className="size-6 text-faint" />
+              <p className="text-[13px] text-muted">No matches for “{query.trim()}”.</p>
+            </div>
           ) : (
             <>
-              {conversations.map((c) => (
+              {visible.map((c) => (
                 <ConversationRow
                   key={c.id}
                   conversation={c}
@@ -181,11 +338,15 @@ export function ChatMonitor() {
       >
         {selected ? (
           <ConversationDetail
+            key={selected.id}
             item={selected}
-            transcriptState={selectedTranscript}
+            chat={selectedChat}
             onBack={() => setMobileView("list")}
             onRetry={() => {
-              if (selectedId) loadTranscript(selectedId, true);
+              if (selectedId) loadChat(selectedId, true);
+            }}
+            onLoadOlder={() => {
+              if (selectedId) loadOlder(selectedId);
             }}
           />
         ) : list.status === "loading" ? (
@@ -219,19 +380,44 @@ function ConversationRow({
     <button
       type="button"
       onClick={onClick}
+      aria-current={active ? "true" : undefined}
       className={cn(
-        "flex w-full flex-col gap-1 border-b border-line px-4 py-3 text-left transition-colors hover:bg-hover",
+        "flex w-full items-center gap-3 border-b border-line2 px-3 py-2.5 text-left transition-colors hover:bg-hover",
         active && "bg-accent-weak hover:bg-accent-weak"
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[13px] font-bold text-text">{conversation.maskedContact}</span>
-        <span className="text-[11px] text-faint">{fmtShort(conversation.lastAt)}</span>
-      </div>
-      <div className="flex items-center gap-3 text-[11.5px] text-muted">
-        <span className="inline-flex items-center gap-1">
-          <Hash className="size-3" /> {conversation.turnCount} turn{conversation.turnCount === 1 ? "" : "s"}
-        </span>
+      <Avatar seed={conversation.id} name={conversation.displayName} size={44} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <span
+            className={cn(
+              "min-w-0 truncate text-[14px] font-semibold text-text",
+              !conversation.displayName && "font-mono"
+            )}
+          >
+            {primaryContactLabel(conversation)}
+          </span>
+          <span className="shrink-0 text-[11px] text-faint">
+            {fmtListStamp(conversation.lastMessageAt ?? conversation.lastAt)}
+          </span>
+        </div>
+        <div className="mt-0.5 flex items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-1 text-[12.5px] text-muted">
+            {conversation.lastMessagePreview ? (
+              <>
+                {conversation.lastMessageRole === "assistant" ? (
+                  <CheckCheck className="size-3.5 shrink-0 text-[var(--wa-tick)]" />
+                ) : null}
+                <span className="truncate">{conversation.lastMessagePreview}</span>
+              </>
+            ) : (
+              <span className="truncate italic text-faint">No messages yet</span>
+            )}
+          </span>
+          <span className="shrink-0 rounded-full bg-wa-weak px-1.5 py-px text-[10.5px] font-semibold text-wa-deep">
+            {conversation.turnCount}
+          </span>
+        </div>
       </div>
     </button>
   );
@@ -239,61 +425,99 @@ function ConversationRow({
 
 function ConversationDetail({
   item,
-  transcriptState,
+  chat,
   onBack,
   onRetry,
+  onLoadOlder,
 }: {
   item: ConversationListItem;
-  transcriptState: TranscriptState | undefined;
+  chat: ChatState | undefined;
   onBack: () => void;
   onRetry: () => void;
+  onLoadOlder: () => void;
 }) {
-  const tv =
-    transcriptState && transcriptState.status === "ready" ? transcriptState.data.transcript : null;
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const didInitialScroll = React.useRef(false);
+  const pendingPrepend = React.useRef<{ prevHeight: number; prevTop: number } | null>(null);
+
+  const ready = chat && chat.status === "ready" ? chat : null;
+  const messages = ready ? ready.messages : [];
+
+  // Scroll behaviour: jump to the bottom on first load (latest messages), and HOLD the
+  // reading position when older messages are prepended (never yank the user to the bottom).
+  React.useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (pendingPrepend.current) {
+      el.scrollTop =
+        el.scrollHeight - pendingPrepend.current.prevHeight + pendingPrepend.current.prevTop;
+      pendingPrepend.current = null;
+      return;
+    }
+    if (ready && !didInitialScroll.current) {
+      el.scrollTop = el.scrollHeight;
+      didInitialScroll.current = true;
+    }
+  }, [messages, ready]);
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el || !ready || !ready.hasMoreBefore || ready.loadingOlder) return;
+    if (el.scrollTop <= 72) {
+      // Capture geometry BEFORE the prepend so the layout effect can restore the position.
+      pendingPrepend.current = { prevHeight: el.scrollHeight, prevTop: el.scrollTop };
+      onLoadOlder();
+    }
+  }
+
   return (
     <>
-      <CardHeader className="flex-col items-stretch gap-2">
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={onBack}
-            className="flex size-7 items-center justify-center rounded-lg text-muted hover:bg-hover lg:hidden"
-            aria-label="Back to conversations"
+      <CardHeader className="gap-2.5 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={onBack}
+          className="-ml-1 flex size-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-hover lg:hidden"
+          aria-label="Back to conversations"
+        >
+          <ArrowLeft className="size-4" />
+        </button>
+        <Avatar seed={item.id} name={item.displayName} size={40} />
+        <div className="min-w-0 flex-1">
+          <div
+            className={cn(
+              "truncate text-[14.5px] font-bold leading-tight text-text",
+              !item.displayName && "font-mono"
+            )}
           >
-            <ArrowLeft className="size-4" />
-          </button>
-          <span className="font-mono text-[15px] font-extrabold text-text">{item.maskedContact}</span>
-          <Badge variant="wa">WhatsApp</Badge>
-          <Badge variant="ai">Read-only</Badge>
+            {primaryContactLabel(item)}
+          </div>
+          <div className="truncate text-[11.5px] leading-tight text-muted">
+            last seen {fmtFull(item.lastAt)}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-muted">
-          <span className="inline-flex items-center gap-1">
-            <Clock className="size-3" /> Last activity {fmtFull(tv?.lastActivityAt ?? item.lastAt)}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Hash className="size-3" /> {tv ? tv.turnCount : item.turnCount} turns
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <MessageSquare className="size-3" /> {tv ? `${tv.messageCount} messages` : "\u2026 messages"}
-          </span>
-        </div>
+        <Badge variant="wa">WhatsApp</Badge>
+        <Badge variant="ai">Read-only</Badge>
       </CardHeader>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-panel2 p-4">
-        {!transcriptState || transcriptState.status === "loading" ? (
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="wa-chat-bg min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-6"
+      >
+        {!chat || chat.status === "loading" ? (
           <TranscriptSkeleton />
-        ) : transcriptState.status === "error" ? (
-          <InlineError message="This transcript could not be loaded." onRetry={onRetry} />
-        ) : tv && tv.state === "restricted" ? (
+        ) : chat.status === "error" ? (
+          <InlineError message="This conversation could not be loaded." onRetry={onRetry} />
+        ) : chat.state === "restricted" ? (
           <StateBlock
             icon={<Lock className="size-6" strokeWidth={1.9} />}
             title="Outside your retention window"
           >
             This conversation&apos;s most recent activity is older than the tenant&apos;s retention
-            limit, so its transcript is not available. The upstream Agno session is never modified
+            limit, so its messages are not available. The upstream Agno session is never modified
             or deleted.
           </StateBlock>
-        ) : tv && tv.state === "empty" ? (
+        ) : messages.length === 0 ? (
           <StateBlock
             icon={<MessagesSquare className="size-6" strokeWidth={1.9} />}
             title="No messages in the retention window"
@@ -302,44 +526,142 @@ function ConversationDetail({
             current window.
           </StateBlock>
         ) : (
-          <div className="flex flex-col gap-3">
-            {(tv?.messages ?? []).map((m, idx) => (
-              <MessageBubble key={m.id ?? `m-${idx}`} sender={m.sender} content={m.content} at={m.at} />
-            ))}
+          // Full-width thread, bottom-aligned (WhatsApp): rows hug the panel edges — NOT a
+          // centered max-width column (that made customer bubbles float mid-panel).
+          <div className="flex min-h-full flex-col justify-end">
+            {ready && ready.hasMoreBefore ? (
+              <div className="flex justify-center py-2">
+                {ready.loadingOlder ? (
+                  <span className="inline-flex items-center gap-1.5 text-[11.5px] text-muted">
+                    <Loader2 className="size-3.5 animate-spin" /> Loading older messages…
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onLoadOlder}
+                    className="rounded-full border border-line bg-panel px-3 py-1 text-[11.5px] font-medium text-muted transition-colors hover:bg-hover"
+                  >
+                    Load older messages
+                  </button>
+                )}
+              </div>
+            ) : null}
+            {messages.map((m, idx, arr) => {
+              const prev = idx > 0 ? arr[idx - 1] : null;
+              const showDay =
+                !!m.createdAt &&
+                (!prev ||
+                  !prev.createdAt ||
+                  dayKeyUTC(new Date(prev.createdAt)) !== dayKeyUTC(new Date(m.createdAt)));
+              const grouped = !!prev && !showDay && prev.role === m.role;
+              return (
+                <React.Fragment key={m.id}>
+                  {showDay ? <DateSeparator label={fmtDayLabel(m.createdAt)} /> : null}
+                  <MessageBubble role={m.role} text={m.text} createdAt={m.createdAt} grouped={grouped} />
+                </React.Fragment>
+              );
+            })}
           </div>
         )}
       </div>
+
+      <ReadOnlyComposer turnCount={item.turnCount} lastActivity={fmtFull(item.lastAt)} />
     </>
   );
 }
 
 function MessageBubble({
-  sender,
-  content,
-  at,
+  role,
+  text,
+  createdAt,
+  grouped,
 }: {
-  sender: "customer" | "bot" | "tool";
-  content: string;
-  at: string | null;
+  role: "customer" | "assistant";
+  text: string;
+  createdAt: string | null;
+  grouped: boolean;
 }) {
-  const isBot = sender === "bot";
+  // customer → LEFT (incoming), assistant → RIGHT (outgoing). Full-width row, never centered.
+  const { row, outgoing } = messageAlignment(role);
   return (
-    <div className={cn("flex flex-col gap-1", isBot ? "items-end" : "items-start")}>
+    <div className={cn("flex", row, grouped ? "mt-0.5" : "mt-2")}>
       <div
         className={cn(
-          "max-w-[78%] rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed shadow-sm",
-          isBot
-            ? "rounded-br-md bg-ai text-[var(--on-ai)]"
-            : "rounded-bl-md border border-line bg-panel text-text"
+          "relative max-w-[80%] rounded-lg px-2.5 py-1.5 text-[13.5px] leading-snug shadow-sm sm:max-w-[72%]",
+          outgoing
+            ? "bg-[var(--wa-out-bg)] text-[var(--wa-bubble-text)]"
+            : "bg-[var(--wa-in-bg)] text-[var(--wa-bubble-text)]",
+          !grouped && (outgoing ? "rounded-tr-sm" : "rounded-tl-sm")
         )}
       >
-        <div className="mb-0.5 flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide opacity-75">
-          {isBot ? <Bot className="size-3" /> : <User className="size-3" />}
-          {isBot ? "AI agent" : "Customer"}
-        </div>
-        <div className="whitespace-pre-wrap break-words">{content}</div>
+        {/* Floated first so the message text wraps to its left, WhatsApp-style. */}
+        <span
+          className="float-right ml-2 mt-1 inline-flex translate-y-0.5 select-none items-center gap-0.5 text-[10px] leading-none"
+          style={{ color: "var(--wa-bubble-meta)" }}
+        >
+          {fmtClock(createdAt)}
+          {outgoing ? <CheckCheck className="size-3" style={{ color: "var(--wa-tick)" }} /> : null}
+        </span>
+        <span className="whitespace-pre-wrap break-words">{text}</span>
       </div>
-      <span className="px-1 text-[10.5px] text-faint">{fmtShort(at)}</span>
+    </div>
+  );
+}
+
+/** Stable per-contact avatar: coloured initials when a name is known, else a neutral icon. */
+function Avatar({ seed, name, size }: { seed: string; name: string | null; size: number }) {
+  const initials = name ? avatarInitials(name) : null;
+  return (
+    <div
+      className="flex shrink-0 select-none items-center justify-center rounded-full font-bold text-white"
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.round(size * 0.36),
+        background: initials ? avatarColor(seed) : "var(--faint)",
+      }}
+      aria-hidden="true"
+    >
+      {initials ?? <User size={Math.round(size * 0.5)} strokeWidth={2} />}
+    </div>
+  );
+}
+
+function DateSeparator({ label }: { label: string }) {
+  if (!label) return null;
+  return (
+    <div className="my-2 flex justify-center">
+      <span
+        className="rounded-md px-3 py-1 text-[11px] font-medium uppercase tracking-wide shadow-sm"
+        style={{ background: "var(--wa-sep-bg)", color: "var(--wa-sep-text)" }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/** Read-only “composer”: keeps the WhatsApp look while making clear this console never sends.
+ *  Also carries the slim ops meta (turns / last activity). */
+function ReadOnlyComposer({ turnCount, lastActivity }: { turnCount: number; lastActivity: string }) {
+  return (
+    <div className="border-t border-line bg-panel px-3 py-2.5">
+      <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-[11px] text-faint">
+        <span>{turnCount} turns</span>
+        <span aria-hidden="true">·</span>
+        <span>last activity {lastActivity}</span>
+      </div>
+      <div
+        className="flex items-center gap-2 rounded-full px-3 py-2"
+        style={{ background: "var(--wa-composer)" }}
+      >
+        <Smile className="size-5 shrink-0 text-faint" />
+        <Plus className="size-5 shrink-0 text-faint" />
+        <span className="flex flex-1 items-center gap-1.5 truncate text-[12.5px] text-faint">
+          <Lock className="size-3.5 shrink-0" /> Read-only — replies are handled in WhatsApp
+        </span>
+        <Mic className="size-5 shrink-0 text-faint" />
+      </div>
     </div>
   );
 }

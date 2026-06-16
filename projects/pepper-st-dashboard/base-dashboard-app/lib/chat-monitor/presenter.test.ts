@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { buildConversationList, buildTranscriptView, isWithinRetention } from "./presenter";
-import type { ParsedTranscript, TranscriptMessage } from "../agno/types";
+import {
+  buildConversationList,
+  buildTranscriptView,
+  isWithinRetention,
+  lastDisplayableMessage,
+  messageAlignment,
+  normalizeCustomerName,
+  primaryContactLabel,
+  toPreviewText,
+  toRole,
+} from "./presenter";
+import { parseTranscript } from "../agno/parser";
+import type { AgnoSession, ParsedTranscript, TranscriptMessage } from "../agno/types";
 
 /**
  * Slice 5 — Chat Monitor pure presenter (PRD 04, ADR-0004/0005/0006). No DB:
@@ -78,6 +89,194 @@ describe("buildConversationList", () => {
     expect(items[0]).not.toHaveProperty("messageCount");
     expect(items[0]).not.toHaveProperty("messages");
     expect(items[0]).not.toHaveProperty("transcript");
+  });
+
+  it("carries safe FLAT last-message preview fields from the preview map (WhatsApp subtitle)", () => {
+    const records = [rec("c1", "94714128890", new Date())];
+    const previewByConversationId = new Map([
+      ["c1", { role: "assistant" as const, text: "Hello! How can I help?", at: "2026-06-16T04:52:00.000Z" }],
+    ]);
+    const { items } = buildConversationList(records, turnCounts, {
+      retentionDays: null,
+      previewByConversationId,
+    });
+    expect(items[0].lastMessagePreview).toBe("Hello! How can I help?");
+    expect(items[0].lastMessageRole).toBe("assistant");
+    expect(items[0].lastMessageAt).toBe("2026-06-16T04:52:00.000Z");
+    // list item stays lightweight + safe: no transcript bodies, no raw phone
+    expect(items[0]).not.toHaveProperty("messages");
+    expect(items[0]).not.toHaveProperty("transcript");
+    expect(JSON.stringify(items[0])).not.toContain("94714128890");
+  });
+
+  it("defaults the preview fields to null when no preview map is provided (dashboard/fast path)", () => {
+    const records = [rec("c1", "94714128890", new Date())];
+    const { items } = buildConversationList(records, turnCounts, { retentionDays: null });
+    expect(items[0].lastMessagePreview ?? null).toBeNull();
+    expect(items[0].lastMessageRole ?? null).toBeNull();
+    expect(items[0].lastMessageAt ?? null).toBeNull();
+  });
+});
+
+/**
+ * WhatsApp-style list subtitle: the most recent displayable message, shaped into one safe
+ * line. Pure (no DB); content only (already shown in the transcript) — never a raw id.
+ */
+describe("toPreviewText", () => {
+  it("collapses newlines and runs of whitespace into a single clean line", () => {
+    expect(toPreviewText("Hello\n\nworld   again\t!")).toBe("Hello world again !");
+  });
+  it("returns an empty string for null/undefined/blank content", () => {
+    expect(toPreviewText(null)).toBe("");
+    expect(toPreviewText(undefined)).toBe("");
+    expect(toPreviewText("   \n  ")).toBe("");
+  });
+  it("truncates with a single-character ellipsis when longer than the max", () => {
+    const out = toPreviewText("abcdefghij", 5);
+    expect(out).toBe("abcd\u2026");
+    expect([...out].length).toBe(5);
+  });
+  it("does not truncate when within the max", () => {
+    expect(toPreviewText("short", 100)).toBe("short");
+  });
+});
+
+describe("toRole", () => {
+  it("maps parser senders to safe DTO roles (customer→customer, bot→assistant, tool→null)", () => {
+    expect(toRole("customer")).toBe("customer");
+    expect(toRole("bot")).toBe("assistant");
+    expect(toRole("tool")).toBeNull();
+  });
+});
+
+// WhatsApp-style row alignment: customer LEFT, assistant RIGHT, NEVER centered.
+describe("messageAlignment", () => {
+  it("aligns the customer row to the LEFT (justify-start, incoming)", () => {
+    const a = messageAlignment("customer");
+    expect(a.row).toBe("justify-start");
+    expect(a.outgoing).toBe(false);
+  });
+  it("aligns the assistant row to the RIGHT (justify-end, outgoing)", () => {
+    const a = messageAlignment("assistant");
+    expect(a.row).toBe("justify-end");
+    expect(a.outgoing).toBe(true);
+  });
+  it("NEVER centers a message row", () => {
+    for (const role of ["customer", "assistant"] as const) {
+      expect(messageAlignment(role).row).not.toMatch(/center/);
+    }
+  });
+});
+
+describe("lastDisplayableMessage", () => {
+  const v = (sender: "customer" | "bot" | "tool", content: string, at: string | null = null) => ({
+    sender,
+    content,
+    at,
+  });
+  it("returns null for an empty message list", () => {
+    expect(lastDisplayableMessage([])).toBeNull();
+  });
+  it("previews the NEWEST message, role-mapped + whitespace-collapsed", () => {
+    const p = lastDisplayableMessage([
+      v("customer", "first", "2026-06-16T04:51:00.000Z"),
+      v("bot", "Hey there!  \n thanks", "2026-06-16T04:52:00.000Z"),
+    ]);
+    expect(p).toEqual({ role: "assistant", text: "Hey there! thanks", at: "2026-06-16T04:52:00.000Z" });
+  });
+
+  // Business-Truth: the preview is the latest DISPLAYABLE user/assistant content message —
+  // never system / tool / from_history / empty-assistant content.
+  it("derives the preview from the latest displayable message of a raw Agno session", () => {
+    const session: AgnoSession = {
+      session_id: "s1",
+      agent_id: "a",
+      created_at: 100,
+      updated_at: 105,
+      runs: [
+        {
+          messages: [
+            { role: "system", id: "s", created_at: 100, content: "prompt" },
+            { role: "user", id: "u1", created_at: 101, content: "Do you have black polo t-shirts?" },
+            { role: "assistant", id: "a1", created_at: 102, content: "" }, // empty / tool-call-only
+            { role: "tool", id: "t1", created_at: 103, content: '{"phone":"94714128890"}' },
+            { role: "user", id: "h1", created_at: 104, content: "old", from_history: true },
+            { role: "assistant", id: "a2", created_at: 105, content: "Yes, we have that available." },
+          ],
+        },
+      ],
+    };
+    const parsed = parseTranscript(session);
+    const mapped = parsed.messages.map((m) => ({
+      sender: m.sender,
+      content: m.content,
+      at: m.at ? m.at.toISOString() : null,
+    }));
+    const p = lastDisplayableMessage(mapped);
+    expect(p?.role).toBe("assistant");
+    expect(p?.text).toBe("Yes, we have that available.");
+    expect(p?.text).not.toContain("94714128890"); // never the raw tool args / phone
+  });
+});
+
+/**
+ * Customer name display (AI-owned `ai.customers.name`, read by value on
+ * tenant+channel+phone). The name is additive DISPLAY data — it must never relax the
+ * masking guarantee, so the raw phone still never appears in the serialized view.
+ */
+describe("customer name display (displayName)", () => {
+  const names = new Map<string, string | null>([["94714128890", "Nimal Perera"]]);
+
+  it("includes displayName from the ai.customers name map when present (#1)", () => {
+    const records = [rec("c1", "94714128890", new Date())];
+    const { items } = buildConversationList(records, turnCounts, {
+      retentionDays: null,
+      namesByContact: names,
+    });
+    expect(items[0].displayName).toBe("Nimal Perera");
+    expect(items[0].maskedContact).toBe("94•••••890"); // masked id retained as secondary
+  });
+
+  it("uses the customer name (NOT the masked phone) as the primary label when a name exists (#2, #3)", () => {
+    const records = [rec("c1", "94714128890", new Date())];
+    const { items } = buildConversationList(records, turnCounts, {
+      retentionDays: null,
+      namesByContact: names,
+    });
+    expect(primaryContactLabel(items[0])).toBe("Nimal Perera");
+    expect(primaryContactLabel(items[0])).not.toBe(items[0].maskedContact);
+  });
+
+  it("falls back safely to the masked contact when the name is missing/null/empty (#4)", () => {
+    expect(normalizeCustomerName(null)).toBeNull();
+    expect(normalizeCustomerName(undefined)).toBeNull();
+    expect(normalizeCustomerName("")).toBeNull();
+    expect(normalizeCustomerName("   ")).toBeNull();
+    expect(normalizeCustomerName("  Sunil  ")).toBe("Sunil");
+
+    const records = [rec("c1", "94714128890", new Date())];
+    const blanks = new Map<string, string | null>([["94714128890", "   "]]);
+    const { items } = buildConversationList(records, turnCounts, {
+      retentionDays: null,
+      namesByContact: blanks,
+    });
+    expect(items[0].displayName).toBeNull();
+    expect(primaryContactLabel(items[0])).toBe(items[0].maskedContact);
+  });
+
+  it("defaults displayName to null when no name map is provided (back-compat)", () => {
+    const records = [rec("c1", "94714128890", new Date())];
+    const { items } = buildConversationList(records, turnCounts, { retentionDays: null });
+    expect(items[0].displayName).toBeNull();
+  });
+
+  it("never leaks the raw phone in the serialized view even when a name is present (security)", () => {
+    const records = [rec("c1", "94714128890", new Date())];
+    const { items } = buildConversationList(records, turnCounts, {
+      retentionDays: null,
+      namesByContact: names,
+    });
+    expect(JSON.stringify(items)).not.toContain("94714128890");
   });
 });
 

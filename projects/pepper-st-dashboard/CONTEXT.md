@@ -5,6 +5,13 @@
 > doc, ADR, issue, test, or code names a domain concept, use the term exactly as
 > defined here. Do not drift to synonyms.
 
+> **V2 full-system docs (2026-06-16, Gate V2-DOCS):** for the **end-to-end** system —
+> including the AI-owned `ai.*` tables the app reads (`ai.agno_sessions`, `ai.customers`,
+> `ai.agno_metrics`) — start at
+> [`docs/v2/00-system-overview.md`](./docs/v2/00-system-overview.md) and the DB inventory
+> [`docs/v2/01-database-inventory.md`](./docs/v2/01-database-inventory.md). This
+> `CONTEXT.md` remains the **vocabulary** source of truth.
+
 - **Project:** `pepper-st-dashboard`
 - **Status:** Phase 1 — Slices 0–7C built (dense real-data **Dashboard** [KPIs + charts + recent], Chat Monitor [lazy-loaded `○ Static` shell, full-height workspace], Analytics report [two real charts]; full-page SaaS layout, real-data only, no document scroll)
 - **Last updated:** 2026-06-16
@@ -288,3 +295,36 @@ until the bot emits them through a stable contract.
 - Decisions → `docs/adr/` and `docs/changelog/technical-decision-log.md`
 - Step-by-step processes → `docs/workflows/`
 - Phase/version planning → `docs/phases/`
+
+---
+
+## 7. Engineering rules
+
+### Business-Truth TDD Gate (permanent)
+
+> **Before any feature/fix implementation starts, tests must prove the real
+> business contract, not just the current implementation path.**
+
+For Dashboard/Analytics this means:
+
+- The **source-of-truth universe must be defined before implementation.**
+- If `ai.agno_sessions` has **valid tenant/channel sessions** for a date range,
+  Dashboard/Analytics must **either**:
+  1. **include** those sessions in the totals, **or**
+  2. **return/report explicit exclusion reasons** for every missing session.
+- A test that only proves `dashboard.app_conversations` has 4 rows and the UI
+  shows 4 is **not enough**.
+- **Parity tests** must compare app API results against **independent
+  source-of-truth fixtures or SQL** — never against the implementation's own
+  output.
+- **PASS is not allowed unless business-truth tests pass.**
+
+**Example**
+
+- **Bad test:** "Given 4 `app_conversations`, dashboard shows 4."
+- **Good test:** "Given **6 valid PEPPER ST Agno sessions today**, Dashboard/
+  Analytics either count all 6 **or** explain exactly why 2 are excluded."
+
+**Note on live data:** the live `ai.*` dataset grows in real time, so
+business-truth tests are **fixture-based + invariant/parity** assertions — they
+must **not** pin to a snapshot's absolute counts (those drift within minutes).

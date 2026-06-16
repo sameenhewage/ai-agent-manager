@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const data = await getConversationList(getDb(), getPool());
+    const data = await getConversationList(getDb(), getPool(), { withPreview: true });
     return NextResponse.json(data, { headers: { "cache-control": "no-store" } });
   } catch (err) {
     console.error(

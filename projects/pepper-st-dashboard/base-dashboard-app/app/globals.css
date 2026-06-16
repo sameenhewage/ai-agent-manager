@@ -20,6 +20,16 @@
   --wa: #25d366;
   --wa-weak: color-mix(in srgb, #25d366 14%, transparent);
   --wa-deep: #128c7e;
+  /* WhatsApp chat surface (Chat Monitor) — light */
+  --wa-paper: #efeae2;
+  --wa-in-bg: #ffffff;
+  --wa-out-bg: #d9fdd3;
+  --wa-bubble-text: #111b21;
+  --wa-bubble-meta: rgba(17, 27, 33, 0.45);
+  --wa-tick: #53bdeb;
+  --wa-sep-bg: #ffffff;
+  --wa-sep-text: #54656f;
+  --wa-composer: #f0f2f5;
   --bg: #f4f5f8;
   --panel: #fff;
   --panel2: #fafbfc;
@@ -70,6 +80,16 @@
   --info: #60a5fa;
   --teal: #2dd4bf;
   --wa-deep: #34d399;
+  /* WhatsApp chat surface (Chat Monitor) — dark */
+  --wa-paper: #0b141a;
+  --wa-in-bg: #202c33;
+  --wa-out-bg: #005c4b;
+  --wa-bubble-text: #e9edef;
+  --wa-bubble-meta: rgba(233, 237, 239, 0.6);
+  --wa-tick: #53bdeb;
+  --wa-sep-bg: #182229;
+  --wa-sep-text: #8696a0;
+  --wa-composer: #1d272d;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.4);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-pop: 0 16px 50px rgba(0, 0, 0, 0.55);
@@ -110,5 +130,16 @@
 @layer utilities {
   .font-mono {
     font-family: var(--mono);
+  }
+
+  /* WhatsApp-style chat wallpaper (subtle doodle over the paper colour). The pattern is a
+     tiny, low-opacity SVG tile so it reads as texture, never noise. */
+  .wa-chat-bg {
+    background-color: var(--wa-paper);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='.035' stroke-width='2'%3E%3Ccircle cx='14' cy='14' r='4'/%3E%3Ccircle cx='42' cy='42' r='4'/%3E%3C/g%3E%3Cg fill='%23000' fill-opacity='.03'%3E%3Ccircle cx='42' cy='12' r='2'/%3E%3Ccircle cx='12' cy='44' r='2'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat: repeat;
+  }
+  [data-theme="dark"] .wa-chat-bg {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Cg fill='none' stroke='%23fff' stroke-opacity='.05' stroke-width='2'%3E%3Ccircle cx='14' cy='14' r='4'/%3E%3Ccircle cx='42' cy='42' r='4'/%3E%3C/g%3E%3Cg fill='%23fff' fill-opacity='.045'%3E%3Ccircle cx='42' cy='12' r='2'/%3E%3Ccircle cx='12' cy='44' r='2'/%3E%3C/g%3E%3C/svg%3E");
   }
 }

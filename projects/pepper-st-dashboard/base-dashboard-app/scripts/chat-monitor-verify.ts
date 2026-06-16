@@ -51,6 +51,8 @@ async function main() {
   console.log(
     `sample masked contacts : ${list.conversations.slice(0, 5).map((c) => c.maskedContact).join(", ")}`
   );
+  const namedCount = list.conversations.filter((c) => c.displayName != null && c.displayName !== "").length;
+  console.log(`with customer name     : ${namedCount}/${list.conversations.length} (ai.customers.name; names not printed)`);
 
   // The raw phone / session ids that MUST NOT appear in either payload.
   const raw = await pool.query<{ external_contact_id: string; agno_session_id: string }>(
@@ -80,6 +82,14 @@ async function main() {
     list.conversations.every((c) => c.maskedContact.includes("•"))
   );
   check("no raw id leaks in the LIST payload", leaks(JSON.stringify(list)).length === 0);
+  check(
+    "named conversations still carry a masked contact (no raw phone as primary)",
+    list.conversations.filter((c) => c.displayName).every((c) => c.maskedContact.includes("•"))
+  );
+  check(
+    "displayName never contains a raw phone / session id",
+    list.conversations.every((c) => !c.displayName || leaks(c.displayName).length === 0)
+  );
 
   // ---- TRANSCRIPT payloads (one fetch per conversation; parses ONE session each) ----
   let slowest = 0;

@@ -1,6 +1,5 @@
 import { Inbox } from "lucide-react";
 import { PageHeader } from "@/components/shell/page-header";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
@@ -14,10 +13,7 @@ export default function ChatMonitorLoading() {
       <PageHeader
         title="Chat Monitor"
         description="Tenant-scoped conversations and live, read-only transcripts — contact numbers are masked and nothing is stored in this dashboard."
-      >
-        <Badge variant="wa">WhatsApp</Badge>
-        <Badge variant="ai">Read-only</Badge>
-      </PageHeader>
+      />
 
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-[340px_1fr]">
         <Card className="flex min-h-0 flex-col overflow-hidden">

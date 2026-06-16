@@ -11,6 +11,12 @@
 Architecture vocabulary follows the `improve-codebase-architecture` skill (module / interface / **seam**
 / depth / deletion test); domain terms follow `CONTEXT.md`.
 
+> **V2 full-system docs (Gate V2-DOCS, 2026-06-16):** for the end-to-end data flow across
+> **both** schemas (dashboard + the read-only `ai.*` the app depends on), the metric
+> source-of-truth, and demo readiness, see [`docs/v2/`](../v2/00-system-overview.md) —
+> especially [`02-relationships-and-data-flow.md`](../v2/02-relationships-and-data-flow.md)
+> and [`04-metrics-and-analytics-source-of-truth.md`](../v2/04-metrics-and-analytics-source-of-truth.md).
+
 ---
 
 ## 1. Current data-loading architecture (as built)

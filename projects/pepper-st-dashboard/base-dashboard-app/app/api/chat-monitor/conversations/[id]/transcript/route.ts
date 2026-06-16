@@ -1,18 +1,26 @@
 import { NextResponse } from "next/server";
 import { getDb, getPool, maskDbUrl } from "@/lib/db/client";
-import { getConversationTranscript } from "@/lib/chat-monitor/service";
+import { getConversationMessagesPage } from "@/lib/chat-monitor/service";
 
 /**
- * GET /api/chat-monitor/conversations/[id]/transcript — lazy SINGLE transcript (Slice 7).
- * Parses ONLY the requested conversation (tenant/channel scoped, IDOR-safe), reads
- * `ai.agno_sessions` READ-ONLY, applies retention + masking, never persists. Server-only.
+ * GET /api/chat-monitor/conversations/[id]/transcript?limit=&before= — WhatsApp-like
+ * PAGINATED message feed for ONE conversation. Extends the original lazy-transcript route
+ * (no duplicate route): parses ONLY the requested conversation (tenant/channel scoped,
+ * IDOR-safe), reads `ai.agno_sessions` READ-ONLY, applies retention + masking, never
+ * persists. Latest page first; older pages via the OPAQUE `before` cursor. Server-only.
  */
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const { searchParams } = new URL(req.url);
+  const limitRaw = Number(searchParams.get("limit"));
+  const before = searchParams.get("before");
   try {
-    const data = await getConversationTranscript(getDb(), getPool(), id);
+    const data = await getConversationMessagesPage(getDb(), getPool(), id, {
+      limit: Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : undefined,
+      before: before ?? null,
+    });
     if (!data) {
       return NextResponse.json({ error: "Conversation not found." }, { status: 404 });
     }
@@ -23,6 +31,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       maskDbUrl(),
       err instanceof Error ? err.message : err
     );
-    return NextResponse.json({ error: "Failed to load transcript." }, { status: 500 });
+    return NextResponse.json({ error: "Failed to load messages." }, { status: 500 });
   }
 }

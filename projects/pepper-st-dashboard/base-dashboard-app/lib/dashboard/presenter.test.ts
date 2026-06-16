@@ -48,6 +48,7 @@ function makeData(overrides: Partial<AnalyticsData> = {}): AnalyticsData {
       { date: "2026-06-14", conversations: 2, tokens: 31712 },
       { date: "2026-06-15", conversations: 10, tokens: 728066 },
     ],
+    coverage: { liveValid: 1234, mapped: 1234, excludedCount: 0, excluded: [], complete: true },
     ...overrides,
   };
 }

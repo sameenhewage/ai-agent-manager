@@ -26,6 +26,7 @@ export interface EndpointResponse {
 export function pickRecentItem(item: ConversationListItem): ConversationListItem {
   return {
     id: item.id,
+    displayName: item.displayName, // safe AI-owned name (or null); never a raw phone
     maskedContact: item.maskedContact,
     status: item.status,
     firstAt: item.firstAt,

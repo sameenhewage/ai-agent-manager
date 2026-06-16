@@ -40,10 +40,12 @@ const fakeAnalytics: AnalyticsData = {
     lastActivityAt: "2026-06-15T09:00:00.000Z",
   },
   series: [{ date: "2026-06-15", conversations: 4, tokens: 828005 }],
+  coverage: { liveValid: 4, mapped: 4, excludedCount: 0, excluded: [], complete: true },
 };
 
 const safeItem: ConversationListItem = {
   id: "11111111-1111-1111-1111-111111111111",
+  displayName: null,
   maskedContact: "94•••••784",
   status: "open",
   firstAt: "2026-06-10T05:00:00.000Z",
@@ -85,12 +87,15 @@ describe("runDashboardEndpoint — safe DTO only", () => {
   it("returns analytics + recent and strips every raw/removed field", async () => {
     const loadAnalytics = vi.fn().mockResolvedValue(fakeAnalytics);
     const loadRecent = vi.fn().mockResolvedValue({
-      // a deliberately UNSAFE item: contains raw fields that must NEVER reach the client
+      // a deliberately UNSAFE item: contains raw fields that must NEVER reach the client,
+      // plus a safe customer displayName that SHOULD reach the client.
       conversations: [
         {
           ...safeItem,
+          displayName: "Nimal Perera",
           externalContactId: "94771234567",
           agnoSessionId: "abcdef0123456789abcdef0123456789",
+          userId: "94771234567",
           customer_id: "c1",
           customer_identity_id: "ci1",
         },
@@ -103,11 +108,12 @@ describe("runDashboardEndpoint — safe DTO only", () => {
     const res = await runDashboardEndpoint(sp("range=7d"), { loadAnalytics, loadRecent });
     expect(res.status).toBe(200);
     const json = JSON.stringify(res.body);
-    expect(json).not.toMatch(/94771234567/); // raw phone
-    expect(json).not.toMatch(/abcdef0123456789/); // raw agno session id
-    expect(json).not.toMatch(/externalContactId|agnoSessionId/);
+    expect(json).not.toMatch(/94771234567/); // raw phone / raw user_id (#5, #6)
+    expect(json).not.toMatch(/abcdef0123456789/); // raw agno session id (#8)
+    expect(json).not.toMatch(/externalContactId|agnoSessionId|userId/); // raw contact id (#7)
     expect(json).not.toMatch(/customer_id|customer_identity_id|customerId|customerIdentityId/);
-    expect(json).toMatch(/94•••••784/); // masked contact IS present
+    expect(json).toMatch(/94•••••784/); // masked contact IS present (secondary)
+    expect(json).toMatch(/Nimal Perera/); // safe customer displayName IS present (#1, #10)
   });
 
   it("400s on invalid range without loading anything", async () => {
@@ -120,15 +126,64 @@ describe("runDashboardEndpoint — safe DTO only", () => {
   });
 });
 
+describe("API parity + business-truth coverage exposure (CONTEXT.md §7)", () => {
+  it("dashboard and analytics reconcile to the SAME totals and coverage for a range", async () => {
+    const loadAnalytics = vi.fn().mockResolvedValue(fakeAnalytics);
+    const loadRecent = vi.fn().mockResolvedValue({
+      conversations: [],
+      channelLabel: "WhatsApp",
+      retentionLabel: "Unlimited",
+      restrictedCount: 0,
+    });
+    const a = await runAnalyticsEndpoint(sp("range=today"), { loadAnalytics });
+    const d = await runDashboardEndpoint(sp("range=today"), { loadAnalytics, loadRecent });
+    const aBody = a.body as { analytics: AnalyticsData };
+    const dBody = d.body as { analytics: AnalyticsData };
+    expect(dBody.analytics.totals).toEqual(aBody.analytics.totals);
+    expect(dBody.analytics.coverage).toEqual(aBody.analytics.coverage);
+  });
+
+  it("surfaces excluded valid sessions (reasoned, masked) — never hides them, never leaks raw ids", async () => {
+    const withExcluded: AnalyticsData = {
+      ...fakeAnalytics,
+      coverage: {
+        liveValid: 6,
+        mapped: 4,
+        excludedCount: 2,
+        excluded: [
+          { ref: "sess_••••b8bb", reason: "unsynced: no active app_conversations row (run db:agno:sync to map it)" },
+          { ref: "sess_••••7e4f", reason: "unsynced: no active app_conversations row (run db:agno:sync to map it)" },
+        ],
+        complete: false,
+      },
+    };
+    const res = await runAnalyticsEndpoint(sp("range=today"), {
+      loadAnalytics: vi.fn().mockResolvedValue(withExcluded),
+    });
+    const body = res.body as { analytics: AnalyticsData };
+    expect(body.analytics.coverage.complete).toBe(false);
+    expect(body.analytics.coverage.excludedCount).toBe(2);
+    const json = JSON.stringify(res.body);
+    expect(json).toContain("sess_••••b8bb"); // masked ref IS surfaced (exclusion is explicit)
+    expect(json).not.toMatch(/6c6bb8bb|7a477e4f/); // raw agno session_id NEVER leaks
+  });
+});
+
 describe("pickRecentItem", () => {
   it("whitelists exactly the safe keys (drops raw/removed fields)", () => {
     const dirty = {
       ...safeItem,
+      displayName: "Nimal Perera",
       externalContactId: "94771234567",
       agnoSessionId: "tok",
       customer_id: "c1",
+      // Chat-Monitor-only fields: the reduced dashboard "recent" DTO must NOT carry them.
+      lastMessagePreview: "Hello there!",
+      lastMessageRole: "assistant",
+      lastMessageAt: "2026-06-16T04:52:00.000Z",
     } as ConversationListItem & Record<string, unknown>;
     expect(Object.keys(pickRecentItem(dirty)).sort()).toEqual([
+      "displayName",
       "firstAt",
       "id",
       "lastAt",
@@ -136,5 +191,11 @@ describe("pickRecentItem", () => {
       "status",
       "turnCount",
     ]);
+  });
+
+  it("passes through a safe customer displayName but never a raw phone", () => {
+    const picked = pickRecentItem({ ...safeItem, displayName: "Nimal Perera" });
+    expect(picked.displayName).toBe("Nimal Perera");
+    expect(JSON.stringify(picked)).not.toContain("94771234567");
   });
 });

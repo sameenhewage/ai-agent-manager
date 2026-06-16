@@ -66,6 +66,14 @@ export function parseTranscript(session: AgnoSession, opts: ParseOptions = {}): 
       if (!sender) return;
       if (sender === "tool" && !includeTool) return;
 
+      // Displayable-message rule (CONTEXT.md §7): an ASSISTANT turn with no visible content
+      // (tool-call-only / internal) is NOT a displayable message — exclude it from the
+      // transcript AND the count so it can't inflate metrics or render an empty bubble.
+      // User messages are always kept (may be media-only). turnCount (= runs.length) is
+      // unaffected — a tool-calling turn is still a turn.
+      const text = typeof m.content === "string" ? m.content : "";
+      if (sender === "bot" && text.trim() === "") return;
+
       const id = typeof m.id === "string" ? m.id : null;
       if (id != null) {
         if (seen.has(id)) return;
@@ -76,8 +84,7 @@ export function parseTranscript(session: AgnoSession, opts: ParseOptions = {}): 
       if (cutoffSeconds != null && ts != null && ts < cutoffSeconds) return;
 
       // Never surface raw tool args (may contain PII); render a neutral placeholder.
-      const content =
-        sender === "tool" ? "[tool activity]" : typeof m.content === "string" ? m.content : "";
+      const content = sender === "tool" ? "[tool activity]" : text;
 
       rows.push({ id, role, sender, content, at: epochSecondsToDate(ts), runIdx, arrIdx, ts });
     });
