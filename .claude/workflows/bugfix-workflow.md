@@ -17,18 +17,26 @@ description: How to fix a bug safely, from reproduction to handoff
    - Locate the module and code path responsible.
    - Note which area / agent owns it.
 
-3. **Create a hypothesis**
-   - State the suspected root cause clearly.
-   - Add logging or a failing test to confirm if needed.
+3. **Prove the root cause** (`AGENTS.md` Root Cause Gate, rule 2). Report all six:
+   1. current flow, 2. the **exact owner** of the behavior, 3. **why** it happens,
+   4. **dev, production, or both**, 5. the **smallest correct root fix**, 6. what
+   you will deliberately **not** change. Add a failing test or logging to confirm.
 
-4. **Make the smallest safe fix**
-   - Fix the root cause with the minimal change.
-   - Avoid unrelated refactors or scope creep.
+4. **Make the smallest root fix** (rules 3, 4, 9)
+   - Fix **ownership / data flow**, not the symptom. One behavior = **one owner**.
+   - **Do not** make a global request de-dupe / cache / broad guard / retry /
+     timeout / silent fallback / extra loader / duplicate state / new table the
+     **primary** fix. Such patches are allowed **only** as supporting safety
+     **after** the root cause is fixed, and must be justified.
+   - Use the smallest correct change; avoid unrelated refactors or scope creep.
 
-5. **Test before / after**
-   - Show the failing behavior before the fix.
-   - Show it passing after the fix.
-   - Add a regression test where practical.
+5. **Prove it — before / after** (Runtime Proof Gate, rule 6)
+   - Show the failing behavior **before** and passing **after**.
+   - Add a regression test that protects the **business contract** (rule 5).
+   - Provide **runtime proof** for user-visible behavior (Network tab / DOM /
+     console / dev+prod / DB verifier as warranted) — "tests pass" alone is not PASS.
+   - Confirm no **safe-DTO** regression (rule 8): no raw phone / user / contact /
+     session id, no raw `runs` / `session_data` in any response.
 
 6. **Document evidence**
    - Record the root cause, the fix, and proof it works.
@@ -39,8 +47,9 @@ description: How to fix a bug safely, from reproduction to handoff
 
 ## Definition of done
 
-- Root cause identified (not just the symptom).
-- Smallest safe fix applied.
-- Regression test added where practical.
-- Before/after evidence documented.
-- Handoff produced.
+- **Root cause proven** (the six-item report), not just the symptom.
+- **Ownership fixed**; no symptom-masking patch used as the primary fix (rules 3, 4).
+- Smallest correct fix applied; no unapproved new libs/tables/abstractions (rule 9).
+- Regression test protects the **business contract** and fails-first where practical.
+- **Before/after + runtime proof** documented (rule 6); safe DTOs verified (rule 8).
+- Report follows the **Final PASS Report Standard** (rule 11); handoff produced.

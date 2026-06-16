@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
   buildMessagesPage,
   decodeCursor,
   encodeCursor,
@@ -83,7 +84,7 @@ describe("buildMessagesPage — initial load", () => {
 
   it("defaults to DEFAULT_PAGE_SIZE and returns everything (no cursor) when fewer than a page", () => {
     const page = buildMessagesPage({ conversationId: CONV, ordered: ordered(10) });
-    expect(DEFAULT_PAGE_SIZE).toBe(50);
+    expect(DEFAULT_PAGE_SIZE).toBe(20);
     expect(page.messages.map((m) => m.text)).toEqual(ordered(10).map((m) => m.text));
     expect(page.hasMoreBefore).toBe(false);
     expect(page.beforeCursor).toBeNull();
@@ -177,5 +178,103 @@ describe("message DTO safety", () => {
     expect(m.createdAt).toBe("2026-06-16T04:52:00.000Z");
     expect(m.role).toBe("assistant");
     expect(m.text).toBe("ok");
+  });
+});
+
+describe("pagination enforcement — initial load NEVER returns the full transcript (regression lock)", () => {
+  // Reproduces the reported "loads all messages at once" symptom and proves it does NOT happen:
+  // the page builder hard-caps every response, so a 120-message conversation can never return 120.
+  it("applies the default page size and does NOT return everything when there is more than a page (120, no limit -> 20)", () => {
+    const page = buildMessagesPage({ conversationId: CONV, ordered: ordered(120) }); // no `limit` passed
+    expect(page.messages).toHaveLength(DEFAULT_PAGE_SIZE); // 20, never 120
+    expect(page.messages.length).toBeLessThan(120);
+    expect(page.messages[0].text).toBe("m100"); // the LATEST 20 (indices 100..119)
+    expect(page.messages[19].text).toBe("m119");
+    expect(page.hasMoreBefore).toBe(true);
+    expect(page.beforeCursor).not.toBeNull();
+  });
+
+  it("clamps an oversized limit to exactly MAX_PAGE_SIZE and still paginates (500, limit=99999 -> 100)", () => {
+    expect(MAX_PAGE_SIZE).toBe(100);
+    const page = buildMessagesPage({ conversationId: CONV, ordered: ordered(500), limit: 99999 });
+    expect(page.messages).toHaveLength(MAX_PAGE_SIZE); // 100, never 500
+    expect(page.messages.length).toBeLessThan(500);
+    expect(page.hasMoreBefore).toBe(true); // 400 older still remain
+  });
+
+  it("walks every page latest->oldest with no overlap and no duplicates until exhausted (120 = 50 + 50 + 20)", () => {
+    const all = ordered(120);
+    const seen = new Set<string>();
+    const texts: string[] = [];
+    let before: string | null | undefined = undefined;
+    let pages = 0;
+    // Simulate the client loop: latest page first, then older via the returned cursor.
+    for (;;) {
+      const page = buildMessagesPage({ conversationId: CONV, ordered: all, limit: 50, before });
+      pages++;
+      expect(page.messages.length).toBeLessThanOrEqual(50); // no page exceeds the limit
+      for (const msg of page.messages) {
+        expect(seen.has(msg.id)).toBe(false); // never a duplicate across pages
+        seen.add(msg.id);
+        texts.push(msg.text);
+      }
+      if (!page.hasMoreBefore) break;
+      before = page.beforeCursor;
+      expect(before).not.toBeNull();
+      expect(pages).toBeLessThan(10); // safety: the loop always terminates
+    }
+    expect(pages).toBe(3); // 50 + 50 + 20
+    expect(seen.size).toBe(120); // every message retrieved exactly once (complete, no loss)
+    const restored = [...texts].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+    expect(restored).toEqual(all.map((msg) => msg.text));
+  });
+});
+
+describe("Chat Monitor page size = 20 (WhatsApp-like; conversation with MORE than 20 messages)", () => {
+  it("server DEFAULT is 20 (not 50): omitting `limit` returns the latest 20 only", () => {
+    expect(DEFAULT_PAGE_SIZE).toBe(20);
+    const page = buildMessagesPage({ conversationId: CONV, ordered: ordered(56) }); // no limit
+    expect(page.messages).toHaveLength(20);
+    expect(page.messages[0].text).toBe("m36"); // latest 20 = indices 36..55
+    expect(page.messages[19].text).toBe("m55");
+    expect(page.hasMoreBefore).toBe(true);
+  });
+
+  it("initial load of a 56-message chat returns the LATEST 20, oldest→newest, with a cursor", () => {
+    const page = buildMessagesPage({ conversationId: CONV, ordered: ordered(56), limit: 20 });
+    expect(page.messages).toHaveLength(20);
+    expect(page.messages.map((m) => m.text)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `m${36 + i}`)
+    );
+    const times = page.messages.map((m) => m.createdAt);
+    expect(times).toEqual([...times].sort()); // chronological within the page
+    expect(page.hasMoreBefore).toBe(true);
+    expect(decodeCursor(page.beforeCursor)).toBe(36);
+  });
+
+  it("scroll-up walks 56 messages as 20 + 20 + 16 with NO overlap and NO duplicates", () => {
+    const all = ordered(56);
+    const sizes: number[] = [];
+    const seen = new Set<string>();
+    let before: string | null | undefined = undefined;
+    let pages = 0;
+    for (;;) {
+      const page = buildMessagesPage({ conversationId: CONV, ordered: all, limit: 20, before });
+      pages++;
+      sizes.push(page.messages.length);
+      for (const m of page.messages) {
+        expect(seen.has(m.id)).toBe(false); // never a duplicate across pages
+        seen.add(m.id);
+      }
+      const times = page.messages.map((m) => m.createdAt);
+      expect(times).toEqual([...times].sort()); // each rendered page stays chronological
+      if (!page.hasMoreBefore) break;
+      before = page.beforeCursor;
+      expect(before).not.toBeNull();
+      expect(pages).toBeLessThan(10); // the loop always terminates
+    }
+    expect(pages).toBe(3);
+    expect(sizes).toEqual([20, 20, 16]); // latest 20, older 20, remaining 16
+    expect(seen.size).toBe(56); // every message retrieved exactly once (complete, no loss)
   });
 });

@@ -32,7 +32,10 @@ export interface ConversationMessagesPageDto {
   beforeCursor: string | null; // opaque; pass back as `before` to load the previous page
 }
 
-export const DEFAULT_PAGE_SIZE = 50;
+/** Chat Monitor transcript page size (WhatsApp-like): the latest 20 messages on open, older
+ *  pages of 20 via the before-cursor. Server default when the client omits `limit`. */
+export const DEFAULT_PAGE_SIZE = 20;
+/** Safety cap so a hostile/oversized `limit` can never return an unbounded transcript. */
 export const MAX_PAGE_SIZE = 100;
 
 /** Encode a stable, absolute (oldest = 0) message index into an opaque base64url cursor. */

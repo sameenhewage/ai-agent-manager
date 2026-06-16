@@ -57,9 +57,14 @@ stay stable as new messages append at the end.
 - The conversation list loads once; selecting a chat fetches **only** that chat's message
   page — the list is never refetched or reset. The header shows the customer name
   **immediately** (from the list item) while messages load.
-- Initial load = **latest 50**, auto-scrolled to the bottom; scroll-up (or a "Load older
-  messages" button) fetches the previous page via the cursor, **prepends** it, and **holds
-  the reading position** (no jump to bottom).
+- Initial load = **latest 20** (`CHAT_MESSAGE_PAGE_SIZE` / server `DEFAULT_PAGE_SIZE = 20`,
+  `MAX_PAGE_SIZE = 50`), auto-scrolled to the bottom; scroll-up (or a "Load older messages"
+  button) fetches the previous page of 20 via the cursor, **prepends** it, and **holds the
+  reading position** (no jump to bottom).
+- **Initial-load ownership (TD-082):** one owner loads the conversation list (once), one owner
+  loads the selected transcript (the `selectedId` effect, once per selection); `loadList()`
+  never loads a transcript. This removed the earlier global request de-dupe — duplicate
+  first-load calls are fixed at the lifecycle, not masked.
 - **No realtime in Slice 12E** (manual retry/refresh only). **Realtime is now MANDATORY** — specified
   as **Slice 12F** (Realtime Monitoring + Automatic Agno Sync: **SSE** browser updates + automatic sync
   freshness; the transcript **tail** updates live). See `docs/architecture/08` §5 and TD-081. Not yet

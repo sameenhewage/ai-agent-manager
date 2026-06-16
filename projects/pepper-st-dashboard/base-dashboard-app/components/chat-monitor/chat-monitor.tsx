@@ -29,6 +29,7 @@ import type {
   ConversationMessagesPageDto,
   ConversationMessagesState,
 } from "@/lib/chat-monitor/message-pagination";
+import { createChatInitialLoad, resolveInitialSelection } from "./initial-load";
 
 /**
  * Chat Monitor (Slice 7) — CLIENT component. The page shell paints instantly; this
@@ -55,7 +56,9 @@ type ChatState =
       loadingOlder: boolean;
     };
 
-const PAGE_SIZE = 50;
+// Chat Monitor transcript page size (client). Mirrors the server `DEFAULT_PAGE_SIZE` so the
+// initial open and every scroll-up request the latest/older 20 messages — never the whole chat.
+const CHAT_MESSAGE_PAGE_SIZE = 20;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTHS_LONG = [
@@ -143,6 +146,12 @@ export function ChatMonitor() {
     chatsRef.current = chats;
   }, [chats]);
 
+  // Synchronous in-flight guard for older-page fetches. The `loadingOlder` flag lives in async
+  // React state (committed via the effect above), so rapid scroll events near the top can read a
+  // stale `false` and double-fire the SAME older page. This ref is set/cleared synchronously so
+  // each older page is fetched exactly ONCE (no repeated requests), independent of render timing.
+  const inFlightOlderRef = React.useRef<Set<string>>(new Set());
+
   // Load the LATEST page of messages for a conversation. Touches ONLY this chat panel's
   // state — the conversation list is never refetched or reset when switching chats.
   const loadChat = React.useCallback(async (id: string, force = false) => {
@@ -150,9 +159,10 @@ export function ChatMonitor() {
     if (!force && cur && cur.status === "ready") return; // cached
     setChats((prev) => ({ ...prev, [id]: { status: "loading" } }));
     try {
-      const res = await fetch(`/api/chat-monitor/conversations/${id}/transcript?limit=${PAGE_SIZE}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/chat-monitor/conversations/${id}/transcript?limit=${CHAT_MESSAGE_PAGE_SIZE}`,
+        { cache: "no-store" }
+      );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: ConversationMessagesPageDto = await res.json();
       setChats((prev) => ({
@@ -181,13 +191,15 @@ export function ChatMonitor() {
     if (!cur || cur.status !== "ready" || cur.loadingOlder || !cur.hasMoreBefore || !cur.beforeCursor) {
       return;
     }
+    if (inFlightOlderRef.current.has(id)) return; // an older-page fetch is already in flight
+    inFlightOlderRef.current.add(id);
     setChats((prev) => {
       const c = prev[id];
       return c && c.status === "ready" ? { ...prev, [id]: { ...c, loadingOlder: true } } : prev;
     });
     try {
       const res = await fetch(
-        `/api/chat-monitor/conversations/${id}/transcript?limit=${PAGE_SIZE}&before=${encodeURIComponent(
+        `/api/chat-monitor/conversations/${id}/transcript?limit=${CHAT_MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(
           cur.beforeCursor
         )}`,
         { cache: "no-store" }
@@ -215,9 +227,15 @@ export function ChatMonitor() {
         const c = prev[id];
         return c && c.status === "ready" ? { ...prev, [id]: { ...c, loadingOlder: false } } : prev;
       });
+    } finally {
+      inFlightOlderRef.current.delete(id);
     }
   }, []);
 
+  // ONE owner of the conversation LIST. Loads the list and AUTO-SELECTS the first conversation
+  // (idempotent; never overrides the user's choice). It does NOT load any transcript — that is
+  // owned solely by the selected-id effect below, so a list load can never fan out into a
+  // duplicate transcript fetch (the original root cause).
   const loadList = React.useCallback(async () => {
     setList({ status: "loading" });
     try {
@@ -226,21 +244,40 @@ export function ChatMonitor() {
       const data: ConversationListPayload = await res.json();
       setList({ status: "ready", data });
       const first = data.conversations[0]?.id ?? null;
-      setSelectedId((prev) => prev ?? first);
-      if (first) loadChat(first);
+      setSelectedId((prev) => resolveInitialSelection(prev, first));
     } catch (e) {
       setList({ status: "error", message: e instanceof Error ? e.message : "Failed to load" });
     }
-  }, [loadChat]);
+  }, []);
 
+  // Single-owner initial-load coordinator (see initial-load.ts). Created once; `loadList` and
+  // `loadChat` are stable useCallbacks so capturing them here is safe. This makes the load-once
+  // contract testable and immune to React StrictMode's dev double-mount WITHOUT any global
+  // request de-dupe.
+  const loaderRef = React.useRef<ReturnType<typeof createChatInitialLoad> | null>(null);
+  if (loaderRef.current === null) {
+    loaderRef.current = createChatInitialLoad({
+      loadList: () => void loadList(),
+      loadTranscript: (id) => void loadChat(id),
+    });
+  }
+
+  // ONE owner: the conversation list. The mount effect may run twice (React StrictMode dev) —
+  // the coordinator guarantees a single list load.
   React.useEffect(() => {
-    loadList();
-  }, [loadList]);
+    loaderRef.current!.ensureListLoaded();
+  }, []);
 
+  // ONE owner: the selected transcript. Fires for the auto-selected first conversation AND for
+  // user selections; loads each conversation's latest page exactly once.
+  React.useEffect(() => {
+    loaderRef.current!.ensureTranscriptLoaded(selectedId);
+  }, [selectedId]);
+
+  // Selecting a conversation only sets state; the selected-id effect owns the transcript load.
   function openConversation(id: string) {
     setSelectedId(id);
     setMobileView("detail");
-    loadChat(id);
   }
 
   const conversations = list.status === "ready" ? list.data.conversations : [];

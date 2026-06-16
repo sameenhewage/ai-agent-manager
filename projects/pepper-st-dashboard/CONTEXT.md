@@ -79,7 +79,18 @@
   Monitoring + Automatic Agno Sync_** — realtime is now **MANDATORY** (no manual `db:agno:sync` during
   customer use; **SSE** browser updates + automatic sync freshness; the coverage banner is a safety net
   only; design in `docs/architecture/08` §5). **That was a docs-only gate; 12F + 12A/12B remain
-  approval-gated, 12G conditional.** **Deploy data-blocker cleared**; revisit deploy after the realtime
+  approval-gated, 12G conditional.** **Slice V2-CHAT-OWNERSHIP COMPLETE** (2026-06-16, TD-082):
+  root-caused the Chat Monitor duplicate first-load (React StrictMode dev double-mounts the
+  client-nav mount effect; `loadList()` also owned the transcript) and fixed it with **single
+  ownership** — one owner loads the list (once), the `selectedId` effect owns the transcript
+  (once per selection), `loadList()` no longer fetches a transcript; the stop-gap **global
+  request de-dupe was removed** (`request-dedupe.ts` deleted), not kept as a mask. **Transcript
+  page size 20** (`CHAT_MESSAGE_PAGE_SIZE` / server `DEFAULT_PAGE_SIZE=20`, `MAX_PAGE_SIZE=100`).
+  Pure `initial-load.ts` makes the load-once contract testable (no new deps). **217/217** tests,
+  `typecheck`/`build` green; `db:chat:verify` + `db:agno:verify` PASS (4-table schema intact, **no
+  message table**, no `ai.*`/`dashboard.*` writes); dev **and** prod Network proof — conversations
+  ×1 / transcript ×1 / `limit=20` on hard-reload **and** client-nav, scroll-up one older page per
+  cursor (20/page, no duplicates), safe masked DTOs only. **Deploy data-blocker cleared**; revisit deploy after the realtime
   slice. Parser intact. See
   `docs/database/07-old-vs-current-db-comparison.md`,
   `docs/architecture/08-dashboard-data-loading-and-realtime-strategy.md`,
@@ -338,3 +349,57 @@ For Dashboard/Analytics this means:
 **Note on live data:** the live `ai.*` dataset grows in real time, so
 business-truth tests are **fixture-based + invariant/parity** assertions — they
 must **not** pin to a snapshot's absolute counts (those drift within minutes).
+
+---
+
+## 8. PEPPER ST. Critical Agent Rules (project-specific contracts)
+
+> The **global engineering gates** — Product Truth, Root Cause, No Symptom
+> Masking, Ownership, TDD-Business-Truth, Runtime Proof, Source-of-Truth, Safe
+> DTO, No Over-Engineering, Docs/Decision-Log, Final PASS Report, and
+> "project-specific contracts live in the project" — are defined in the root
+> **`AGENTS.md` → "Engineering rules (global, mandatory)"** and apply here in
+> full. The contracts below are the **PEPPER ST.-specific** behaviors those gates
+> must protect. Read **both** before working in this project.
+
+### 8.1 Chat Monitor — WhatsApp behavior contract
+
+- **Conversation list is lightweight** — it carries **no** transcript bodies and
+  no message arrays. Each row shows **customer name** (`ai.customers.name`, with
+  masked-contact fallback), the **latest displayable message preview** (never a
+  system/tool/internal message), and the **latest message time**.
+- **Selected chat loads the latest page first** — **default page size = 20**,
+  **max page size = 50**. **No full-transcript initial load.**
+- **Older messages load on scroll-up**, one page (20) at a time, via an **opaque
+  cursor**; pages **never duplicate or overlap**; the reading position is **held**
+  (no jump) when older messages prepend.
+- **Opening a chat scrolls to the latest/bottom.**
+- **Bubble alignment:** customer messages align **LEFT** (incoming); assistant
+  messages align **RIGHT** (outgoing); full-width rows, **never centered**.
+- **No message table; no transcript duplication into `dashboard.*`** — the
+  transcript stays in `ai.agno_sessions.runs` (read-only, parsed on demand).
+- **Safe DTO only** — no raw phone / `user_id` / `external_contact_id` / Agno
+  `session_id`, and no raw `runs` / `session_data`, in any browser payload.
+
+> **⚠ Implementation gap to close (code, not docs).** The contract page size is
+> **default 20 / max 50**, but the shipped code currently uses **default 50 /
+> max 100** (`base-dashboard-app/lib/chat-monitor/message-pagination.ts`:
+> `DEFAULT_PAGE_SIZE = 50`, `MAX_PAGE_SIZE = 100`; `chat-monitor.tsx` fetches
+> `limit=50`). Align the code to **20 / 50** in a separate, **test-first** code
+> slice (out of scope for rule registration). Until then, **this contract is the
+> source of truth and the code is non-conforming.**
+
+### 8.2 Realtime contract (Slice 12F — mandatory)
+
+- **No manual `npm run db:agno:sync` during normal customer use.** New Agno
+  sessions/runs must appear **automatically**.
+- **Browser updates use SSE** (one-way, read-only) unless changed by an **ADR**.
+- The **coverage banner** ("Showing N of M… run sync") is a **safety net**, not
+  the normal operating state.
+- **WebSocket is rejected** unless/until human reply/handover control is approved
+  (ADR-0009, Phase 2).
+- Realtime sync writes touch **`dashboard.app_conversations` metadata/index
+  only** — `ai.*` stays read-only; **no** transcript-body copy, **no** message
+  table.
+- Status: **redefined, approval-gated, NOT implemented** (TD-081). Implementation
+  must start with **failing tests** and satisfy the global Runtime Proof Gate.
