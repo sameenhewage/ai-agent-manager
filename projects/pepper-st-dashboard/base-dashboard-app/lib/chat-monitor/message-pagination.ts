@@ -56,11 +56,19 @@ export function decodeCursor(cursor: string | null | undefined): number | null {
   }
 }
 
-/** Deterministic, opaque message id from (conversationId, absolute index). Stable across
- *  pages (same message → same id), never the raw Agno message id. FNV-1a → base36. */
-export function safeMessageId(conversationId: string, index: number): string {
+/** Deterministic, opaque message id, never the raw Agno message id (FNV-1a → base36). When a
+ *  STABLE provider message id is supplied (merged contact threads, ADR-0016 Gate B) the id is
+ *  derived from it, so the SAME message keeps the SAME id regardless of the merged thread's
+ *  composition or a message's absolute index. Without one it falls back to the positional
+ *  (conversationId, index) seed — byte-identical to the original two-argument behaviour. */
+export function safeMessageId(
+  conversationId: string,
+  index: number,
+  providerKey?: string | null
+): string {
+  const seed =
+    providerKey != null && providerKey !== "" ? `pm:${providerKey}` : `${conversationId}:${index}`;
   let h = 0x811c9dc5;
-  const seed = `${conversationId}:${index}`;
   for (let i = 0; i < seed.length; i++) {
     h ^= seed.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
@@ -75,8 +83,10 @@ function clampLimit(limit: number | undefined): number {
 
 export interface BuildMessagesPageInput {
   conversationId: string;
-  /** FULL displayable messages, oldest→newest (already filtered + role-mapped). */
-  ordered: ReadonlyArray<{ role: ChatRole; text: string; at: string | null }>;
+  /** FULL displayable messages, oldest→newest (already filtered + role-mapped). `key` is the
+   *  optional STABLE provider message id used to derive an opaque, merge-stable id; it is hashed
+   *  (never emitted raw). */
+  ordered: ReadonlyArray<{ role: ChatRole; text: string; at: string | null; key?: string | null }>;
   limit?: number;
   before?: string | null;
 }
@@ -107,7 +117,7 @@ export function buildMessagesPage(input: BuildMessagesPageInput): MessagesPageSl
   for (let i = start; i < end; i++) {
     const m = ordered[i];
     messages.push({
-      id: safeMessageId(conversationId, i),
+      id: safeMessageId(conversationId, i, m.key),
       role: m.role,
       text: m.text,
       createdAt: m.at ?? null,

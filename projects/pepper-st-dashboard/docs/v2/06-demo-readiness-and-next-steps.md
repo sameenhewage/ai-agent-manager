@@ -68,9 +68,15 @@
   Slice 12F** (SSE + automatic Agno sync; see `docs/architecture/08` §5) and ships only after explicit
   approval + failing tests first. *(Chat pagination already shipped in Slice 12E.)*
 - **Do not** build against the old `tenant → channel → conversation` model. The **locked** model is
-  **`Tenant → Business → optional Location → Channel → Conversation → Agno Session`** (`tenant ≠
-  business`) — **ADR-0015** + `docs/architecture/09`. Its schema migration, onboarding, realtime scope,
-  and UI filters are **approval-gated** (documented, **not started**).
+  **`Tenant → Business → optional Location → Channel → Conversation (Contact Thread) → Provider Sessions
+  → Agno Session`** (`tenant ≠ business`) — **ADR-0015 + ADR-0016** + `docs/architecture/09`. Its schema
+  migration, onboarding, realtime scope, and UI filters are **approval-gated** (documented, **not
+  started**).
+- **Do not** treat **one Agno session as one conversation**. A **conversation is a customer/contact
+  thread** that may contain **many** Agno/provider sessions (**ADR-0016**) — the current one-row-per-session
+  model causes **duplicate Chat Monitor rows** (proven: masked `94•••••273` shows twice) and a transcript
+  that misses the contact's other sessions. The contact-thread schema (`app_conversation_sessions`),
+  migration, and read-path merge are **approval-gated** (documented, **not started**).
 
 ## 5. Acceptance checklist for the demo
 
@@ -98,14 +104,18 @@
 ## 7. Recommended next step
 
 **The Architecture Finalization Gate now leads the queue.** The multi-business hierarchy
-(**`Tenant → Business → optional Location → Channel → Conversation → Agno Session`**, `tenant ≠
-business`) is **documented and locked** in **ADR-0015** + **`docs/architecture/09`** (this is a
-docs-only gate — no code/migration/`ai.*`). **Await approval of that contract before** starting its
-(approval-gated) implementation: **(a)** schema-migration proposal (7-table target via
-expand→backfill→verify→enforce), **(b)** onboarding-flow update (tenant → default business → locations →
-channels → agent bindings → entitlements), **(c)** realtime-scope update (extend the ADR-0014 event
-contract with business/location/channel scope + safe deltas; add `app_realtime_outbox`; keep SSE), and
-**(d)** UI filters (business/location/channel).
+(**`Tenant → Business → optional Location → Channel → Conversation (Contact Thread) → Provider Sessions
+→ Agno Session`**, `tenant ≠ business`) is **documented and locked** in **ADR-0015 + ADR-0016** +
+**`docs/architecture/09`** (docs/schema-proposal only — no code/migration/DB-write/`ai.*`). **ADR-0016**
+adds the **contact-thread** fix (one row per contact; `app_conversation_sessions` links provider
+sessions) for the verified duplicate-row defect (TD-090). **Await approval of that contract before** starting its
+(approval-gated) implementation: **(a)** schema-migration proposal (**8-table** target incl.
+`app_conversation_sessions` via expand→backfill→verify→enforce), **(b)** onboarding-flow update (tenant →
+default business → locations → channels → agent bindings → entitlements), **(c)** realtime-scope update
+(extend the ADR-0014 event contract with business/location/channel scope + safe deltas, **target the
+contact thread**; add `app_realtime_outbox`; keep SSE), **(d)** UI filters (business/location/channel),
+and **(e)** Chat Monitor **read-path merge** (one row per contact thread; transcript merges linked
+provider sessions; dedupe by a stable provider message id — ADR-0016).
 
 Also still queued (approval-gated, fail-first): **settle the metric source-of-truth** (`04` §5–§7) and
 the token/cost story; and resume **Slice 12F** realtime (foundations 12F-1/12F-2 built then paused for

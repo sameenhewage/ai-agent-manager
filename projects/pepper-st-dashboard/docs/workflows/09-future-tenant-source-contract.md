@@ -45,9 +45,10 @@ The dashboard then resolves tenant/channel from `metadata`, and uses
 `source_agent_id`, `source_team_id`, `external_business_id`,
 `external_phone_number_id` (Phase 1 sets only `source_agent_id`). Its stable
 `channel_key` (uniqueness `(tenant_id, channel_key)`) also lets one tenant hold
-several channels. `app_conversations` keeps `agno_session_id` and
-`external_contact_id` as **separate** fields (contact id **indexed, not unique**),
-so they can **diverge with no dashboard migration**.
+several channels. The session id and the contact id are **separate** (contact id **indexed, not
+unique**), so they **diverge with no dashboard migration**. *(ADR-0016: the session id now lives on
+**`app_conversation_sessions.external_session_id`**, not on `app_conversations`; the conversation is a
+customer/contact thread keyed by `external_contact_id`.)*
 
 ## Migration/resolution change (future, gated)
 
@@ -72,4 +73,5 @@ so they can **diverge with no dashboard migration**.
 
 - A session resolves to exactly one tenant via the contract, independent of phone.
 - Collisions/reuse no longer mis-route conversations.
-- `agno_session_id` ≠ `external_contact_id` is handled cleanly end to end.
+- `external_session_id` ≠ `external_contact_id` is handled cleanly end to end (ADR-0016; the session id
+  lives on `app_conversation_sessions`).

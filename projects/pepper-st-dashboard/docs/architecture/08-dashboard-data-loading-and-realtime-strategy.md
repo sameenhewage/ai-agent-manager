@@ -147,6 +147,12 @@ materialisation of already-correct live math — add them when scale demands, no
 > WebSocket; no `LISTEN/NOTIFY` on `ai.*`; no Redis/queue.** §5 below is the original single-business
 > design; the multi-business **scope** (tenant → business → optional location → channel → conversation)
 > layers on top per ADR-0015 — it does **not** revert to the old `tenant → channel → conversation` model.
+>
+> **Contact-thread boundary (2026-06-17 — ADR-0016):** the realtime `conversation_id` is the **customer
+> contact thread**, not a provider session. A new Agno/provider session for an existing contact is a
+> **thread update, never a new row**; the browser patches the thread by `conversation_id`. The
+> `external_contact_id`, `agno_session_id`/`external_session_id`, and `provider_session_id` stay
+> **server-side only** — never in any payload.
 
 **Boundary reminder:** the dashboard **monitors**; the AI platform owns message processing and replies.
 So real-time here means *"freshly observed read state"*, never bi-directional control.
@@ -171,11 +177,12 @@ So real-time here means *"freshly observed read state"*, never bi-directional co
 Agno session/run changes
   → server detects change            (webhook if Agno provides it, else short-interval read-through poll)
   → sync dashboard.app_conversations metadata/index   (read-only ai.* → syncAllActiveChannels)
-  → publish a SAFE event             (event type + internal conversation UUID; + business/location/channel SCOPE ids and safe deltas per ADR-0015)
+  → publish a SAFE event             (event type + internal conversation UUID = the CONTACT THREAD (ADR-0016); + business/location/channel SCOPE ids and safe deltas per ADR-0015)
   → browser receives the SSE event
-  → client refetches/patches the affected surface
-        /api/dashboard · /api/analytics · /api/chat-monitor/conversations
-        · /api/chat-monitor/conversations/[id]/transcript
+  → client PATCHES the affected thread + safe UI state from the event delta (PREFERRED)
+        — safe delta/patch only; do NOT refetch the whole dashboard/analytics/chat-monitor API per message
+        — a targeted single-surface refetch is a FALLBACK only
+          (/api/dashboard · /api/analytics · /api/chat-monitor/conversations · …/[id]/transcript)
 ```
 
 ### 5.4 Transport decision
@@ -194,8 +201,9 @@ Agno session/run changes
 - **No** transcript-body copy; **no** message table / `app_conversation_messages` (ADR-0004 + the
   boundary lock below).
 - **No raw PII** in any SSE payload or API — no phone / `user_id` / `external_contact_id` / Agno
-  `session_id` / raw `runs` / `session_data`. The current 12F event carries a **safe event type** + the
-  **internal conversation UUID**; under **ADR-0015** it additionally carries the **safe scope ids**
+  `session_id` / `external_session_id` / `provider_session_id` / raw `runs` / `session_data`. The current
+  12F event carries a **safe event type** + the **internal conversation UUID** (the **contact thread** —
+  ADR-0016); under **ADR-0015** it additionally carries the **safe scope ids**
   (`business_id`/`location_id`/`channel_id`) and may carry **safe UI-ready deltas** (e.g. last-message
   preview/text — already shown in Chat Monitor, **not** raw identifiers). Raw ids remain forbidden.
 - A **lock** prevents duplicate concurrent syncs; on sync **failure** the coverage warning stays and
@@ -216,11 +224,13 @@ Agno session/run changes
 > (`app_conversations` rows, `last_at`, `status`, identity reuse). It **never** copies
 > `ai.agno_sessions.runs[].messages[]` into `dashboard.*`. The **canonical transcript stays in
 > `ai.agno_sessions.runs`** (ADR-0004); there is **no** `app_conversation_messages` table, **no** message
-> index, and **no** content cache. Grain is fixed: **one Agno `session_id` → one `app_conversations`
-> row**; **one contact (`user_id`) → many sessions → many conversations** sharing the same
-> `external_contact_id` value (no `app_customer_identities` table since 12D-D / ADR-0012). A message
-> index/content cache would require a **new ADR superseding
-> ADR-0004** (tracked as the conditional Slice 12G) and is explicitly **out of scope** here.
+> index, and **no** content cache. **Grain (ADR-0016):** `app_conversations` = the **customer/contact
+> thread** (one row per contact); `app_conversation_sessions` = the **provider/Agno session links**
+> (`external_session_id = ai.agno_sessions.session_id`, by value). **One contact thread may link many
+> provider sessions**, and a **new provider session for an existing contact updates the same thread — not
+> a new Chat Monitor row** (no `app_customer_identities` since 12D-D / ADR-0012). A message index/content
+> cache would require a **new ADR superseding ADR-0004** (tracked as the conditional Slice 12G) and is
+> explicitly **out of scope** here.
 
 ---
 

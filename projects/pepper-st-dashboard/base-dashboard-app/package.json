@@ -26,7 +26,10 @@
     "db:agno:archive-orphans": "tsx scripts/agno-archive-orphans.ts",
     "db:agno:verify": "tsx scripts/agno-verify.ts",
     "db:chat:verify": "tsx scripts/chat-monitor-verify.ts",
-    "db:analytics:verify": "tsx scripts/analytics-verify.ts"
+    "db:analytics:verify": "tsx scripts/analytics-verify.ts",
+    "db:sessions:backfill": "tsx scripts/backfill-conversation-sessions.ts",
+    "db:sessions:verify": "tsx scripts/conversation-sessions-verify.ts",
+    "db:contacts:collapse": "tsx scripts/collapse-contact-threads.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.1.1",

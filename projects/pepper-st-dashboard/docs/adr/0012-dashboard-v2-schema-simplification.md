@@ -11,6 +11,14 @@
   (Agno v2 recoupling), `docs/database/03` (contract), `docs/database/07` (old-vs-current),
   `docs/database/08` (this slice's review).
 
+> **⚠ REVISED (2026-06-17) — ADR-0016.** Decision **§4** ("Grain unchanged … one Agno session = one
+> `app_conversations` row, unique on `(tenant_id, channel_id, agno_session_id)`") is **superseded**: the
+> conversation grain is now the **customer/contact thread** (one row **per contact**), and
+> `agno_session_id` **moves off** `app_conversations` into the new **`app_conversation_sessions`**
+> (`external_session_id` == `ai.agno_sessions.session_id` by value, no FK). The dashboard table **count
+> grows by one** (and to **8** in the full multi-business target). ADR-0012's **by-value contact, no
+> customer/identity table, and read-only boundary** principles are **kept**. See **ADR-0016**.
+
 ## Context
 
 ADR-0011 re-coupled the dashboard to Agno v2 **behind the mapping seam** and concluded that the existing

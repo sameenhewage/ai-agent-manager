@@ -16,6 +16,15 @@
 > the app reads (`ai.agno_sessions`, `ai.customers`, `ai.agno_metrics`) — see
 > [`docs/v2/01-database-inventory.md`](../v2/01-database-inventory.md).
 
+> **⚠ TARGET CHANGE (2026-06-17) — ADR-0016.** This page documents the **current** contract, in which
+> **one Agno session → one `app_conversations` row** (`agno_session_id` on the row). The **target**
+> (ADR-0016 / `architecture/09`) makes a **conversation = a customer/contact thread** (one row **per
+> contact**) and moves `agno_session_id` into a new **`app_conversation_sessions`** table
+> (`external_session_id` == `ai.agno_sessions.session_id` by value, **no FK**;
+> `unique(tenant_id, provider, external_session_id)`). Boundary becomes
+> `tenant_id + business_id + channel_id + external_contact_id`. Migration is **approval-gated / not yet
+> applied** — the contract below is still live.
+
 - **Owner:** this app. Schema `dashboard` is the only schema the dashboard writes (via
   `drizzle-kit migrate` + the seed/sync scripts). It stores **mapping + organisation metadata only**
   — never transcript bodies, never anything copied from `ai.*` beyond linking keys/timestamps.
@@ -32,7 +41,7 @@
   `app_conversation_messages`, no message index, no content cache). Canonical transcript stays in
   `ai.agno_sessions.runs` (ADR-0004). Grain: **one Agno `session_id` → one `app_conversations` row**
   (`(tenant_id, channel_id, agno_session_id)` unique); **one contact → many sessions → many
-  conversations**, all sharing the **same `external_contact_id` value** (indexed, **not** unique). *(12D-B
+  conversations**, all sharing the **same `external_contact_id` value** (indexed, **not** unique). *(**ADR-0016 target:** `app_conversations` = the **customer/contact thread**; `agno_session_id` moves to `app_conversation_sessions.external_session_id` — see the top banner.)* *(12D-B
   originally described this as one shared `app_customer_identities` row; that table was **removed in 12D-D /
   ADR-0012** — the contact is now stored by value, see the next bullet.)* Any future webhook/trigger sync
   updates metadata/index only. Locked by `schema.test.ts`

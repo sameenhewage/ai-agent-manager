@@ -7,6 +7,7 @@ import {
   integer,
   timestamp,
   index,
+  uniqueIndex,
   unique,
   check,
 } from "drizzle-orm/pg-core";
@@ -14,9 +15,11 @@ import {
 /**
  * Dashboard-owned schema (Slice 2 — PROPOSAL ONLY, not applied).
  *
- * Drizzle implementation of docs/architecture/02-schema-proposal.sql.md. Four
- * `dashboard.app_*` tables (Slice 12D-D / ADR-0012 removed the app_customers +
- * app_customer_identities CRM model — `ai.customers` owns the contact registry).
+ * Drizzle implementation aligned with docs/architecture/09 + ADR-0015/0016. FIVE
+ * `dashboard.app_*` tables: app_tenants, app_channels, app_conversations,
+ * app_tenant_entitlements, and app_conversation_sessions (ADR-0016 provider/Agno
+ * session links — Gate A expand-only). Slice 12D-D / ADR-0012 removed the app_customers +
+ * app_customer_identities CRM model — `ai.customers` owns the contact registry.
  * Multi-tenant from day one; every operational row carries `tenant_id`. The canonical transcript stays in the Agno/WhatsApp
  * pipeline — there is NO message table and NO foreign key into `ai.*`
  * (`agno_session_id` links by value only). Entitlements carry NO hidden product
@@ -109,17 +112,65 @@ export const appConversations = dashboard.table(
     updatedAt: tz("updated_at").notNull().defaultNow(),
   },
   (t) => [
+    // Legacy session-grain uniqueness — KEPT for compatibility until Gate C.3 drops agno_session_id.
     unique("app_conv_agno_unique").on(t.tenantId, t.channelId, t.agnoSessionId),
     check(
       "app_conv_status_check",
       sql`${t.status} in ('open','resolved','archived')`
     ),
     index("app_conv_tenant_last_idx").on(t.tenantId, t.lastAt.desc()),
-    // external_contact_id is INDEXED but NOT UNIQUE (one contact => many conversations).
-    index("app_conv_contact_idx").on(
+    // ADR-0016 Gate C.2: enforce ONE row per contact thread via a UNIQUE INDEX on
+    // (tenant_id, channel_id, external_contact_id), applied AFTER the live collapse. This also
+    // serves the contact lookup (it replaces the former non-unique app_conv_contact_idx).
+    uniqueIndex("app_conv_contact_thread_key").on(
       t.tenantId,
       t.channelId,
       t.externalContactId
+    ),
+  ]
+);
+
+/**
+ * Provider/Agno session links for a conversation/contact thread (ADR-0016, Gate A — EXPAND ONLY).
+ * One row per provider session. `external_session_id` maps **by value** to `ai.agno_sessions.session_id`
+ * — deliberately **NO** cross-schema FK into `ai.*`. `app_conversations` is becoming the customer/contact
+ * thread; this child table holds the per-session links. Gate A is ADDITIVE: `app_conversations.agno_session_id`
+ * remains for compatibility, and the final contact-thread uniqueness is **NOT** enforced yet (Gate C).
+ * `business_id` is nullable until the ADR-0015 business migration lands (so `app_businesses` exists to FK to).
+ */
+export const appConversationSessions = dashboard.table(
+  "app_conversation_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => appTenants.id, { onDelete: "cascade" }),
+    // Nullable until the ADR-0015 business migration lands (app_businesses does not exist yet => no FK).
+    businessId: uuid("business_id"),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => appConversations.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull().default("agno"),
+    // Links BY VALUE to ai.agno_sessions.session_id — deliberately NO cross-schema FK into ai.*.
+    externalSessionId: text("external_session_id").notNull(),
+    startedAt: tz("started_at"),
+    lastAt: tz("last_at"),
+    createdAt: tz("created_at").notNull().defaultNow(),
+    updatedAt: tz("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // One dashboard link per provider session (ADR-0016). NOT the final contact-thread uniqueness.
+    unique("app_conv_sessions_provider_session_key").on(
+      t.tenantId,
+      t.provider,
+      t.externalSessionId
+    ),
+    index("app_conv_sessions_conversation_idx").on(t.conversationId),
+    index("app_conv_sessions_tenant_conversation_idx").on(t.tenantId, t.conversationId),
+    index("app_conv_sessions_tenant_provider_session_idx").on(
+      t.tenantId,
+      t.provider,
+      t.externalSessionId
     ),
   ]
 );
@@ -162,4 +213,6 @@ export type AppTenant = typeof appTenants.$inferSelect;
 export type NewAppTenant = typeof appTenants.$inferInsert;
 export type AppChannel = typeof appChannels.$inferSelect;
 export type AppConversation = typeof appConversations.$inferSelect;
+export type AppConversationSession = typeof appConversationSessions.$inferSelect;
+export type NewAppConversationSession = typeof appConversationSessions.$inferInsert;
 export type AppTenantEntitlement = typeof appTenantEntitlements.$inferSelect;

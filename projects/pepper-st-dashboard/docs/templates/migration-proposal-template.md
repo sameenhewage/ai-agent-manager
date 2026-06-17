@@ -19,7 +19,7 @@
 
 ## Boundary checks
 
-- **4 tables only** (ADR-0012: `app_tenants`, `app_channels`, `app_conversations`, `app_tenant_entitlements`); **no** forbidden tables (incl. the removed `app_customers` / `app_customer_identities`): <ok>
+- **Dashboard-owned tables only** (current live: `app_tenants`, `app_channels`, `app_conversations`, `app_tenant_entitlements`; **target adds** `app_businesses` / `app_locations` / `app_conversation_sessions` / `app_ai_agent_bindings` / `app_realtime_outbox` — ADR-0015/0016); **no** forbidden tables (incl. the removed `app_customers` / `app_customer_identities`): <ok>
 - **No FK** from `dashboard.*` into `ai.*`: <ok>
 - Nothing applied; `ai.agno_*` untouched: <ok>
 

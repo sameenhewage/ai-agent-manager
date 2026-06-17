@@ -68,6 +68,67 @@ describe("safeMessageId", () => {
   });
 });
 
+/**
+ * ADR-0016 Gate B — when sessions are merged into one contact thread, a message's absolute index
+ * is no longer stable, so the opaque id is derived from the STABLE provider message id instead.
+ */
+describe("safeMessageId — provider-id keyed (merge-stable)", () => {
+  it("derives a stable opaque id from the provider message id, independent of conversation/index", () => {
+    const a = safeMessageId(CONV, 0, "agno-msg-1");
+    const b = safeMessageId("a-different-conversation-id", 999, "agno-msg-1");
+    expect(a).toBe(b); // same provider id ⇒ same opaque id, whatever the position
+    expect(a).toMatch(/^m_/);
+    expect(a).not.toContain("agno-msg-1"); // raw provider id never exposed
+  });
+
+  it("falls back to the positional id (byte-identical to the 2-arg form) when there is no provider id", () => {
+    expect(safeMessageId(CONV, 70, null)).toBe(safeMessageId(CONV, 70));
+    expect(safeMessageId(CONV, 70, "")).toBe(safeMessageId(CONV, 70));
+    expect(safeMessageId(CONV, 70, undefined)).toBe(safeMessageId(CONV, 70));
+  });
+
+  it("distinct provider ids yield distinct opaque ids", () => {
+    expect(safeMessageId(CONV, 0, "id-A")).not.toBe(safeMessageId(CONV, 0, "id-B"));
+  });
+});
+
+describe("buildMessagesPage — provider-id-keyed messages (merged thread)", () => {
+  it("uses the provider id for the DTO id and NEVER emits it raw", () => {
+    const orderedMsgs = [
+      { role: "customer" as const, text: "hi", at: "2026-06-16T00:00:00.000Z", key: "agno-1" },
+      { role: "assistant" as const, text: "hello", at: "2026-06-16T00:00:01.000Z", key: "agno-2" },
+    ];
+    const page = buildMessagesPage({ conversationId: CONV, ordered: orderedMsgs, limit: 50 });
+    expect(page.messages[0].id).toBe(safeMessageId(CONV, 0, "agno-1"));
+    expect(page.messages[1].id).toBe(safeMessageId(CONV, 1, "agno-2"));
+    const json = JSON.stringify(page);
+    expect(json).not.toContain("agno-1");
+    expect(json).not.toContain("agno-2");
+    expect(Object.keys(page.messages[0]).sort()).toEqual(["createdAt", "id", "role", "text"]);
+  });
+
+  it("keeps a message's id STABLE even when its absolute index shifts (older page prepended)", () => {
+    const m = (text: string, key: string, at: string) => ({ role: "customer" as const, text, at, key });
+    const renderA = buildMessagesPage({
+      conversationId: CONV,
+      ordered: [m("M", "stable-1", "2026-06-16T00:00:02.000Z")],
+      limit: 50,
+    });
+    const renderB = buildMessagesPage({
+      conversationId: CONV,
+      ordered: [
+        m("X", "k0", "2026-06-16T00:00:00.000Z"),
+        m("Y", "k1", "2026-06-16T00:00:01.000Z"),
+        m("M", "stable-1", "2026-06-16T00:00:02.000Z"), // same message, now at index 2
+      ],
+      limit: 50,
+    });
+    const idA = renderA.messages[0].id;
+    const idB = renderB.messages.find((mm) => mm.text === "M")!.id;
+    expect(idA).toBe(idB); // stable id despite the index change
+  });
+});
+
 describe("buildMessagesPage — initial load", () => {
   it("returns the latest PAGE only, oldest→newest, with hasMoreBefore + a non-null cursor", () => {
     const page = buildMessagesPage({ conversationId: CONV, ordered: ordered(120), limit: 50 });

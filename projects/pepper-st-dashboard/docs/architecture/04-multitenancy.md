@@ -98,6 +98,8 @@ See `docs/workflows/01-tenant-onboarding.md`.
 
 - Seed two tenants; assert tenant B never sees tenant A's conversations.
 - Assert a new tenant's dashboard is empty.
-- Assert composite uniqueness prevents duplicate identities/conversations within
-  a tenant+channel (`(tenant_id, channel_id, agno_session_id)`), while
-  `external_contact_id` may legitimately repeat across conversations.
+- Assert composite uniqueness prevents duplicate **conversations** within a tenant+channel — the
+  contact-thread key `(tenant_id, channel_id, external_contact_id)` (ADR-0016; **was**
+  `(tenant_id, channel_id, agno_session_id)` pre-ADR-0016), with provider sessions unique on
+  `app_conversation_sessions (tenant_id, provider, external_session_id)`. *(No `app_customer_identities`
+  since ADR-0012.)*

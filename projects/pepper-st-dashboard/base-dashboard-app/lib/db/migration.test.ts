@@ -136,3 +136,46 @@ describe("dashboard v2 schema simplification migration (ADR-0012)", () => {
     expect(sql).not.toMatch(/\bai\.[a-z_]/i);
   });
 });
+
+// ADR-0016, Gate A (EXPAND ONLY) — the provider/Agno session-link table. The global checks above already
+// assert the FULL migration set never touches ai.*, copies no transcript, and runs no INSERT (DDL-only).
+describe("Gate A — app_conversation_sessions expand migration (ADR-0016)", () => {
+  it("creates the app_conversation_sessions table in the dashboard schema", () => {
+    expect(sql).toContain('"dashboard"."app_conversation_sessions"');
+  });
+
+  it("links external_session_id BY VALUE — no foreign key on it (no cross-schema FK into ai.*)", () => {
+    expect(sql).not.toContain('("external_session_id") REFERENCES');
+  });
+
+  it("FKs conversation_id → app_conversations and tenant_id → app_tenants (dashboard-only)", () => {
+    expect(sql).toMatch(/"conversation_id"\) REFERENCES "dashboard"\."app_conversations"/);
+    expect(sql).toMatch(/"tenant_id"\) REFERENCES "dashboard"\."app_tenants"/);
+  });
+
+  it("enforces the provider-session uniqueness (NOT the final contact-thread uniqueness — Gate C)", () => {
+    expect(sql).toContain(
+      '"app_conv_sessions_provider_session_key" UNIQUE("tenant_id","provider","external_session_id")'
+    );
+  });
+});
+
+// ADR-0016, Gate C.2 — ENFORCE one row per contact thread. The collapse itself runs as a separate
+// reversible SCRIPT (scripts/collapse-contact-threads.ts); the migration is DDL-only: it adds the
+// contact-thread UNIQUE index and drops the former non-unique contact index. agno_session_id and
+// its legacy uniqueness are intentionally retained (removed later in Gate C.3).
+describe("Gate C.2 — contact-thread uniqueness migration (ADR-0016)", () => {
+  it("adds a UNIQUE index on (tenant_id, channel_id, external_contact_id)", () => {
+    expect(sql).toMatch(
+      /CREATE UNIQUE INDEX IF NOT EXISTS "app_conv_contact_thread_key" ON "dashboard"\."app_conversations" USING btree \("tenant_id","channel_id","external_contact_id"\)/
+    );
+  });
+
+  it("drops the former non-unique contact index (schema-qualified, replaced by the unique one)", () => {
+    expect(sql).toMatch(/DROP INDEX IF EXISTS "dashboard"\."app_conv_contact_idx"/);
+  });
+
+  it("does NOT drop app_conversations.agno_session_id in this gate (that is Gate C.3)", () => {
+    expect(sql).not.toMatch(/alter table[^;]*"app_conversations"[^;]*drop column[^;]*"agno_session_id"/i);
+  });
+});

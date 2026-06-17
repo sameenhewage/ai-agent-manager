@@ -12,13 +12,16 @@
 > [`docs/v2/01-database-inventory.md`](./docs/v2/01-database-inventory.md). This
 > `CONTEXT.md` remains the **vocabulary** source of truth.
 
-> **Business hierarchy (LOCKED — ADR-0015 / `docs/architecture/09`):**
-> **`Tenant → Business → optional Location → Channel → Conversation → Agno Session`.** A **tenant is the
-> SaaS / billing / owner boundary** and **`tenant ≠ business`** — a tenant may run **many** businesses (a
-> **default business** is created at onboarding). **Do not** model the system as the old
-> `Tenant → Channel → Conversation`. Target schema = **7 core tables** (adds `app_businesses`,
-> `app_locations`, `app_ai_agent_bindings`, `app_realtime_outbox` to today's set); the migration is
-> **approval-gated / not yet applied** — PEPPER ST. currently runs as a **single default business**.
+> **Business hierarchy (LOCKED — ADR-0015 + ADR-0016 / `docs/architecture/09`):**
+> **`Tenant → Business → optional Location → Channel → Conversation (Contact Thread) → Provider Sessions → Agno Session`.**
+> A **tenant is the SaaS / billing / owner boundary** and **`tenant ≠ business`** — a tenant may run
+> **many** businesses (a **default business** is created at onboarding). A **Conversation is a
+> customer/contact thread** and **may contain many Agno/provider sessions** (ADR-0016 — **NOT**
+> one-session-per-conversation). **Do not** model the system as the old `Tenant → Channel → Conversation`.
+> Target schema = **8 core tables** (adds `app_businesses`, `app_locations`, `app_conversation_sessions`,
+> `app_ai_agent_bindings`, `app_realtime_outbox` to today's set); the migration is **approval-gated / not
+> yet applied** — PEPPER ST. currently runs as a **single default business** on the **pre-ADR-0016
+> one-session-per-row** model.
 
 - **Project:** `pepper-st-dashboard`
 - **Status:** Phase 1 — Slices 0–7C built (dense real-data **Dashboard** [KPIs + charts + recent], Chat Monitor [lazy-loaded `○ Static` shell, full-height workspace], Analytics report [two real charts]; full-page SaaS layout, real-data only, no document scroll)
@@ -202,21 +205,27 @@ The v1 link between a Customer and an external contact id on a channel. The
 on `app_conversations.external_contact_id` (one value may appear in many
 conversations); the contact registry is AI-owned.
 
-### Conversation
-The dashboard's **mapping record** for one Agno session. Stored in
-`app_conversations`. **Grain: one `ai.agno_sessions` row (keyed by the opaque
-`session_id`) = one Conversation;** a single contact (`user_id`) may own **many** sessions
-(one contact : N conversations). It holds `agno_session_id` (the link to Agno),
-`external_contact_id` (the masked contact, stored **by value** — no
-`customer_id`/`customer_identity_id` since ADR-0012), and cached
-timing (`first_at`, `last_at`) — **never** message bodies. Dashboard-owned
-`status` is one of `open`/`resolved`/`archived` (CHECK-constrained), and
-`updated_at` is bumped when mapping refreshes `last_at`/`status`. Uniqueness is
-`(tenant_id, channel_id, agno_session_id)`; `external_contact_id` is **indexed,
-not unique**. Per-visit / per-day splitting is **parked** (see roadmap).
-**Ownership (target, ADR-0015):** every conversation also owns **`business_id`** (required) and an
-optional **`location_id`** (branch, NULL until resolved), plus `location_source` /
-`location_confidence`. Required scope is **`tenant_id` + `business_id` + `channel_id`**.
+### Conversation (Contact Thread)
+The dashboard's **customer/contact thread** — **one row per contact**, stored in `app_conversations`.
+**Grain (ADR-0016): one customer/contact thread = one Conversation = MANY Agno/provider sessions.** It
+holds `external_contact_id` (the masked contact, stored **by value** — no
+`customer_id`/`customer_identity_id` since ADR-0012) and cached/rolled-up timing (`first_at`, `last_at`)
+— **never** message bodies. Dashboard-owned `status` is one of `open`/`resolved`/`archived`
+(CHECK-constrained). **Boundary (target, ADR-0015/0016):** `tenant_id + business_id + channel_id +
+external_contact_id` (transitional, pre-business: `tenant_id + channel_id + external_contact_id`); plus
+optional `location_id` (branch, NULL until resolved) + `location_source`/`location_confidence`.
+
+> **CURRENT vs TARGET:** today `app_conversations` is still **one row per Agno session**, uniquely keyed
+> `(tenant_id, channel_id, agno_session_id)` with `agno_session_id` on the row (the pre-ADR-0016 model —
+> this is what causes **duplicate Chat Monitor rows** for a contact with multiple sessions). Under
+> **ADR-0016** the grain becomes the contact thread and `agno_session_id` **moves off** this table to
+> **Provider Session** rows (`app_conversation_sessions`). Per-visit/per-day splitting stays **parked**.
+
+### Provider Session
+A single Agno/provider session segment **under** a Conversation/Contact Thread — a row in the target
+table **`app_conversation_sessions`** (ADR-0016). Holds `conversation_id` (the thread), `provider`
+(`'agno'`), and `external_session_id` which maps **by value** to `ai.agno_sessions.session_id` (**no FK
+to `ai.*`**); `unique(tenant_id, provider, external_session_id)`. One thread → many provider sessions.
 
 ### Agno Session
 A row in **`ai.agno_sessions`** (external, read-only to us). Its **`session_id` is an opaque
@@ -254,9 +263,11 @@ The contact's id on a channel: the WhatsApp phone (text), sourced from
 separate identity table since ADR-0012). **Never stored as a number; never assumed to start with `94`; always masked.**
 
 ### Agno Session ID
-The value linking `app_conversations` → `ai.agno_sessions.session_id` (the opaque 32-char token).
-It is **distinct from** `external_contact_id` (the contact phone, from `user_id`) — in v2 they have
-**diverged**: one contact (`user_id`) can own many `session_id`s.
+The opaque 32-char token identifying one `ai.agno_sessions` row. It is **distinct from**
+`external_contact_id` (the contact phone, from `user_id`) — one contact (`user_id`) owns many
+`session_id`s. **Today** it is stored on `app_conversations.agno_session_id`; **under ADR-0016** it moves
+to **`app_conversation_sessions.external_session_id`** (the Conversation/Contact Thread no longer carries
+it). Linked **by value** — no FK into `ai.*`.
 
 ### AI Agent Binding
 The mapping from a dashboard **scope** (tenant / business / location / channel) to an **external
@@ -343,8 +354,8 @@ until the bot emits them through a stable contract.
 
 - Don't say "user" for an end customer — say **Customer** (and "Tenant user" for
   future staff/admins).
-- Don't say "session" loosely — distinguish **Agno Session** (external row) vs
-  **Conversation** (our mapping record).
+- Don't say "session" loosely — distinguish **Agno Session** / **Provider Session** (a session segment)
+  vs **Conversation / Contact Thread** (our per-contact thread, which groups many sessions — ADR-0016).
 - Don't call a tenant a "store", "account-as-session", or "workspace-as-session".
 - Don't call the phone an "id number" — it's an **External Contact ID** (text).
 - Don't conflate **Tenant** and **Business** — a tenant (billing/owner) may run **many** businesses
@@ -352,6 +363,9 @@ until the bot emits them through a stable contract.
   **`tenant → business → optional location → channel → conversation`**.
 - Don't store a platform **name** (`"whatsapp"`) as a channel's **`external_channel_id`** — that is the
   **provider-side id**; the platform is the separate **`type`**.
+- Don't say **"one Agno session = one conversation"** — a **Conversation is a contact thread** that may
+  contain **many** Agno/provider sessions (ADR-0016). Don't treat `agno_session_id` as the conversation
+  boundary; the boundary is `tenant + [business +] channel + external_contact_id`.
 
 ---
 

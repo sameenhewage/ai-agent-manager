@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS "dashboard"."app_conv_contact_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "app_conv_contact_thread_key" ON "dashboard"."app_conversations" USING btree ("tenant_id","channel_id","external_contact_id");

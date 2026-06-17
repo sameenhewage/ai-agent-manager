@@ -29,10 +29,12 @@ See `docs/workflows/01-tenant-onboarding.md`.
 ## Flow B — A conversation appears
 
 1. The Agno bot handles a WhatsApp chat and writes/updates a row in
-   `ai.agno_sessions` (its `session_id` = the phone number).
+   `ai.agno_sessions` (its `session_id` is an **opaque token**; the contact phone is `user_id` — ADR-0011).
 2. The dashboard's **mapping workflow** resolves that session to the right
-   tenant + channel, ensures a **Customer** + **Customer Identity** exist, and
-   ensures an **`app_conversations`** record points at the `agno_session_id`.
+   tenant + channel, **finds-or-creates the customer/contact thread** (`app_conversations`, one row per
+   contact, keyed by `external_contact_id` = `user_id`), and **links the provider session** to it
+   (`app_conversation_sessions.external_session_id` = `session_id`) — ADR-0012/0016 (no
+   `app_customers` / `app_customer_identities`; the contact is stored **by value**, masked).
 3. The conversation now shows in **Chat Monitor** for that tenant, with the
    contact id **masked**.
 
@@ -44,9 +46,9 @@ See `docs/workflows/02-...` and `docs/workflows/04-...`.
 
 1. Operator selects a conversation in the list (masked contact + last-activity
    time + turn count).
-2. The dashboard reads the linked Agno session **live**, builds the **Transcript**
-   (flatten `runs[].messages[]`, drop `system`, dedupe by `id`, order by time),
-   and renders it in the prototype's 3-column style.
+2. The dashboard reads the thread's linked Agno/provider session(s) **live**, builds the **Transcript**
+   (**merge all linked sessions**, flatten `runs[].messages[]`, drop `system`, dedupe by `id`, order by
+   time — ADR-0016), and renders it in the prototype's 3-column style.
 3. **Retention** is applied at read time: messages older than the tenant's
    window are not shown.
 

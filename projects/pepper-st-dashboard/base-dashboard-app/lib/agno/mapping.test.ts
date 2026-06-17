@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   resolveChannelForAgent,
   buildConversationValues,
+  buildSessionLinkValues,
   deriveExternalContactId,
   deriveExpectedAgentId,
   deriveSessionKey,
@@ -122,5 +123,42 @@ describe("buildConversationValues", () => {
     // the dashboard conversation index carries NO duplicate customer/identity keys
     expect("customerId" in v).toBe(false);
     expect("customerIdentityId" in v).toBe(false);
+  });
+});
+
+// ADR-0016, Gate B dual-write: the provider/session link built for app_conversation_sessions.
+describe("buildSessionLinkValues", () => {
+  const session: AgnoSession = {
+    session_id: "f".repeat(32),
+    agent_id: "t1:c1",
+    user_id: "94714128890",
+    created_at: 100,
+    updated_at: 200,
+    runs: [],
+  };
+
+  it("links BY VALUE (external_session_id = session_id) with provider 'agno' and null business_id", () => {
+    const v = buildSessionLinkValues(session, { tenantId: "t1", conversationId: "conv-1" });
+    expect(v.tenantId).toBe("t1");
+    expect(v.conversationId).toBe("conv-1");
+    expect(v.provider).toBe("agno");
+    expect(v.externalSessionId).toBe("f".repeat(32));
+    expect(v.externalSessionId).toBe(deriveSessionKey(session)); // SAME value the conversation links by
+    expect(v.businessId).toBeNull(); // no app_businesses yet (ADR-0015 pending)
+    expect(v.startedAt?.getTime()).toBe(100 * 1000);
+    expect(v.lastAt?.getTime()).toBe(200 * 1000);
+  });
+
+  it("is idempotent in shape — same session ⇒ identical unique-key triple (no duplicate on re-sync)", () => {
+    const a = buildSessionLinkValues(session, { tenantId: "t1", conversationId: "conv-1" });
+    const b = buildSessionLinkValues({ ...session, updated_at: 999 }, { tenantId: "t1", conversationId: "conv-1" });
+    // the conflict key (tenant, provider, external_session_id) is stable; only last_at advances
+    expect([a.tenantId, a.provider, a.externalSessionId]).toEqual([b.tenantId, b.provider, b.externalSessionId]);
+    expect(b.lastAt?.getTime()).toBe(999 * 1000);
+  });
+
+  it("never references ai.* and carries no transcript/runs", () => {
+    const v = buildSessionLinkValues(session, { tenantId: "t1", conversationId: "conv-1" });
+    expect(JSON.stringify(v)).not.toMatch(/runs|session_data|messages|transcript|\bai\b/i);
   });
 });

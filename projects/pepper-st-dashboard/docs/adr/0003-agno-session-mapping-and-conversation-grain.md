@@ -2,7 +2,14 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-15
-- **Related:** ADR-0004, ADR-0008, `docs/architecture/03-agno-mapping.md`
+- **Related:** ADR-0004, ADR-0008, **ADR-0016 (revises the grain)**, `docs/architecture/03-agno-mapping.md`
+
+> **⚠ GRAIN REVISED (2026-06-17) — ADR-0016.** The grain below ("one Agno `session_id` = one
+> `app_conversations` row") is **superseded**: a dashboard **conversation is now a customer/contact
+> thread** (one row **per contact**), and each Agno session is a **provider session** in the new
+> `app_conversation_sessions` table (`external_session_id` == `ai.agno_sessions.session_id` by value, no
+> FK). **`1 Agno session = 1 dashboard conversation` no longer holds.** The by-value/read-only link and
+> the no-message-table boundary (ADR-0004) are unchanged. See **ADR-0016** + `docs/architecture/09`.
 
 ## Context
 

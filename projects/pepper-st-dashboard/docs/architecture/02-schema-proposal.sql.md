@@ -15,6 +15,12 @@
 > value** on `app_conversations.external_contact_id`. The SQL below is **historical**; the current schema
 > is `base-dashboard-app/lib/db/schema.ts` and the contract is `docs/database/03-dashboard-data-contract.md`.
 > **Do not** recreate the customer/identity tables.
+>
+> **⚠ TARGET MODEL (2026-06-17) — ADR-0015 + ADR-0016.** The dashboard grows to **8 core tables** (adds
+> `app_businesses`, `app_locations`, `app_conversation_sessions`, `app_ai_agent_bindings`,
+> `app_realtime_outbox`). The conversation becomes a **customer/contact thread** and `agno_session_id`
+> **moves off** `app_conversations` to **`app_conversation_sessions.external_session_id`** (by value, no
+> FK). See `docs/architecture/09` + ADR-0015/0016. The SQL below remains historical.
 
 > ## ⛔ DO NOT APPLY
 > This SQL is a **reviewable proposal**. It has **not** been run. No `dashboard`

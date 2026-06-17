@@ -92,3 +92,45 @@ export function buildConversationValues(
     lastAt: epochSecondsToDate(session.updated_at),
   };
 }
+
+/** Identifiers the caller resolves before building a provider/session link row (ADR-0016). */
+export interface SessionLinkIds {
+  tenantId: string;
+  conversationId: string; // the resolved/created dashboard.app_conversations.id (FK target)
+}
+
+/**
+ * Provider/session link row (dashboard.app_conversation_sessions). `businessId` is always null
+ * here — the ADR-0015 business migration has not landed (no `app_businesses` to reference yet).
+ */
+export interface SessionLinkValues {
+  tenantId: string;
+  businessId: null;
+  conversationId: string;
+  provider: "agno";
+  externalSessionId: string; // links BY VALUE to ai.agno_sessions.session_id — no FK into ai.*
+  startedAt: Date | null;
+  lastAt: Date | null;
+}
+
+/**
+ * Build the ADR-0016 provider/session link for a synced Agno session (Gate B dual-write).
+ * Pure: `external_session_id = session_id` (same value the conversation links by), provider
+ * `'agno'`, `business_id` null. The unique (tenant, provider, external_session_id) makes the
+ * upsert idempotent — re-syncing the same session updates `last_at`, never inserts a duplicate.
+ * Never references `ai.*`; never collapses conversations.
+ */
+export function buildSessionLinkValues(
+  session: AgnoSession,
+  ids: SessionLinkIds
+): SessionLinkValues {
+  return {
+    tenantId: ids.tenantId,
+    businessId: null,
+    conversationId: ids.conversationId,
+    provider: "agno",
+    externalSessionId: deriveSessionKey(session),
+    startedAt: epochSecondsToDate(session.created_at),
+    lastAt: epochSecondsToDate(session.updated_at),
+  };
+}

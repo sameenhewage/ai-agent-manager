@@ -141,25 +141,80 @@ export function buildConversationList(
   }
 ): ConversationListResult {
   const now = opts.now ?? new Date();
+
+  // ADR-0016 Gate B: one LIST ROW per CONTACT THREAD, not per provider session. The service scopes
+  // the query to ONE tenant+channel, so the transitional thread boundary reduces to
+  // external_contact_id here (business_id joins this key once the ADR-0015 column lands). Conversations
+  // are NOT collapsed in the DB — this is a read-time grouping only.
+  const groups = new Map<string, ConversationRecord[]>();
+  for (const r of records) {
+    const bucket = groups.get(r.externalContactId);
+    if (bucket) bucket.push(r);
+    else groups.set(r.externalContactId, [r]);
+  }
+
   let restrictedCount = 0;
   const items: ConversationListItem[] = [];
 
-  for (const r of records) {
-    const lastAt = toDate(r.lastAt);
-    if (!isWithinRetention(lastAt, opts.retentionDays, now)) {
-      restrictedCount++; // not surfaced as normal accessible history
+  for (const [contactId, members] of groups) {
+    // last_at = the latest activity across all grouped conversations / linked sessions.
+    const groupLastAt = members.reduce<Date | null>((acc, m) => {
+      const d = toDate(m.lastAt);
+      return d && (!acc || d > acc) ? d : acc;
+    }, null);
+
+    if (!isWithinRetention(groupLastAt, opts.retentionDays, now)) {
+      restrictedCount++; // the WHOLE thread is outside the window
       continue;
     }
-    const preview = opts.previewByConversationId?.get(r.id) ?? null;
+
+    // Representative = the most-recent member (last_at desc, id asc for determinism). Its id is the
+    // ONE safe dashboard conversation id surfaced for the group; the transcript endpoint expands it
+    // back to the full contact thread.
+    const representative = [...members].sort((a, b) => {
+      const at = toDate(a.lastAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
+      const bt = toDate(b.lastAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
+      if (at !== bt) return bt - at;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    })[0];
+
+    const groupFirstAt = members.reduce<Date | null>((acc, m) => {
+      const d = toDate(m.firstAt);
+      return d && (!acc || d < acc) ? d : acc;
+    }, null);
+
+    // Status = safest active rule: open if ANY grouped row is open, else resolved if any resolved.
+    const statuses = new Set(members.map((m) => m.status));
+    const status = statuses.has("open")
+      ? "open"
+      : statuses.has("resolved")
+        ? "resolved"
+        : representative.status;
+
+    // Turn count = sum across the thread's sessions (cheap jsonb_array_length(runs)); no transcript.
+    const turnCount = members.reduce((sum, m) => sum + (turnCountById.get(m.id) ?? 0), 0);
+
+    // Preview = the latest displayable message across ALL linked provider sessions.
+    let preview: LastDisplayableMessage | null = null;
+    let previewAt = Number.NEGATIVE_INFINITY;
+    for (const m of members) {
+      const p = opts.previewByConversationId?.get(m.id) ?? null;
+      if (!p) continue;
+      const at = p.at ? Date.parse(p.at) : Number.NEGATIVE_INFINITY;
+      if (preview == null || at >= previewAt) {
+        preview = p;
+        previewAt = at;
+      }
+    }
+
     items.push({
-      id: r.id,
-      displayName: normalizeCustomerName(opts.namesByContact?.get(r.externalContactId)),
-      maskedContact: maskContactId(r.externalContactId),
-      status: r.status,
-      firstAt: toDate(r.firstAt)?.toISOString() ?? null,
-      lastAt: lastAt ? lastAt.toISOString() : null,
-      // Cheap turn count only; transcript bodies/counts are loaded lazily per conversation.
-      turnCount: turnCountById.get(r.id) ?? 0,
+      id: representative.id,
+      displayName: normalizeCustomerName(opts.namesByContact?.get(contactId)),
+      maskedContact: maskContactId(contactId),
+      status,
+      firstAt: groupFirstAt ? groupFirstAt.toISOString() : null,
+      lastAt: groupLastAt ? groupLastAt.toISOString() : null,
+      turnCount,
       lastMessagePreview: preview ? preview.text : null,
       lastMessageRole: preview ? preview.role : null,
       lastMessageAt: preview ? preview.at : null,

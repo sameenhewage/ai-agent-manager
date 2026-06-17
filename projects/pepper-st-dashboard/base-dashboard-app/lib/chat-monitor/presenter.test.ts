@@ -119,6 +119,103 @@ describe("buildConversationList", () => {
 });
 
 /**
+ * ADR-0016 Gate B — one LIST ROW per CONTACT THREAD (transitional key: tenant+channel+contact;
+ * the service scopes tenant+channel, so it reduces to external_contact_id). Conversations are NOT
+ * collapsed in the DB — this is read-time grouping only.
+ */
+describe("buildConversationList — contact-thread grouping (ADR-0016 Gate B)", () => {
+  it("renders TWO conversations with the same contact as ONE list row (representative = most recent)", () => {
+    const records = [
+      rec("c1", "94714128890", new Date("2026-06-10T00:00:00Z")),
+      rec("c2", "94714128890", new Date("2026-06-14T00:00:00Z")), // SAME contact, newer
+    ];
+    const { items } = buildConversationList(
+      records,
+      new Map([
+        ["c1", 3],
+        ["c2", 5],
+      ]),
+      { retentionDays: null }
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe("c2"); // most-recent member is the surfaced id
+    expect(items[0].lastAt).toBe(new Date("2026-06-14T00:00:00Z").toISOString());
+    expect(items[0].turnCount).toBe(8); // summed across the thread's sessions
+  });
+
+  it("keeps DISTINCT contacts as separate rows (no accidental collapse)", () => {
+    const records = [
+      rec("c1", "94714128890", new Date("2026-06-10T00:00:00Z")),
+      rec("c2", "94771234567", new Date("2026-06-14T00:00:00Z")),
+    ];
+    const { items } = buildConversationList(records, new Map(), { retentionDays: null });
+    expect(items).toHaveLength(2);
+  });
+
+  it("uses first_at = earliest and last_at = latest across the grouped thread", () => {
+    const records = [
+      rec("c1", "94714128890", new Date("2026-06-14T00:00:00Z"), "open", new Date("2026-06-01T00:00:00Z")),
+      rec("c2", "94714128890", new Date("2026-06-20T00:00:00Z"), "open", new Date("2026-06-10T00:00:00Z")),
+    ];
+    const { items } = buildConversationList(records, new Map(), { retentionDays: null });
+    expect(items[0].firstAt).toBe(new Date("2026-06-01T00:00:00Z").toISOString());
+    expect(items[0].lastAt).toBe(new Date("2026-06-20T00:00:00Z").toISOString());
+  });
+
+  it("status is 'open' if ANY grouped conversation is open (safest-active rule)", () => {
+    const records = [
+      rec("c1", "94714128890", new Date("2026-06-10T00:00:00Z"), "resolved"),
+      rec("c2", "94714128890", new Date("2026-06-14T00:00:00Z"), "resolved"),
+      rec("c3", "94714128890", new Date("2026-06-12T00:00:00Z"), "open"),
+    ];
+    const { items } = buildConversationList(records, new Map(), { retentionDays: null });
+    expect(items).toHaveLength(1);
+    expect(items[0].status).toBe("open");
+  });
+
+  it("preview = the latest displayable message across the thread's sessions", () => {
+    const records = [
+      rec("c1", "94714128890", new Date("2026-06-10T00:00:00Z")),
+      rec("c2", "94714128890", new Date("2026-06-14T00:00:00Z")),
+    ];
+    const previewByConversationId = new Map([
+      ["c1", { role: "customer" as const, text: "older message", at: "2026-06-10T00:00:00.000Z" }],
+      ["c2", { role: "assistant" as const, text: "newest message", at: "2026-06-14T00:00:00.000Z" }],
+    ]);
+    const { items } = buildConversationList(records, new Map(), {
+      retentionDays: null,
+      previewByConversationId,
+    });
+    expect(items[0].lastMessagePreview).toBe("newest message");
+    expect(items[0].lastMessageRole).toBe("assistant");
+  });
+
+  it("never leaks the raw contact even when grouping multiple sessions", () => {
+    const records = [
+      rec("c1", "94714128890", new Date("2026-06-10T00:00:00Z")),
+      rec("c2", "94714128890", new Date("2026-06-14T00:00:00Z")),
+    ];
+    const { items } = buildConversationList(records, new Map(), { retentionDays: null });
+    expect(JSON.stringify(items)).not.toContain("94714128890");
+    expect(items[0].maskedContact).toBe("94•••••890");
+  });
+
+  it("treats a whole out-of-window thread as ONE restricted entry (not per session)", () => {
+    const now = new Date("2026-06-15T00:00:00Z");
+    const records = [
+      rec("c1", "94714128890", new Date("2026-01-01T00:00:00Z")),
+      rec("c2", "94714128890", new Date("2026-02-01T00:00:00Z")),
+    ];
+    const { items, restrictedCount } = buildConversationList(records, new Map(), {
+      retentionDays: 30,
+      now,
+    });
+    expect(items).toHaveLength(0);
+    expect(restrictedCount).toBe(1); // one thread, not two
+  });
+});
+
+/**
  * WhatsApp-style list subtitle: the most recent displayable message, shaped into one safe
  * line. Pure (no DB); content only (already shown in the transcript) — never a raw id.
  */

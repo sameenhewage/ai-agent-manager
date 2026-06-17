@@ -10,13 +10,22 @@ Render a clean, ordered, human-readable transcript for a conversation, **live an
 read-only** from `ai.agno_sessions`, with no duplication, no system noise, masked
 PII, and retention applied.
 
+> **⚠ ADR-0016 update (2026-06-17):** a conversation is a **customer/contact thread**; the transcript is
+> built by **merging ALL of the thread's linked provider sessions**
+> (`app_conversation_sessions.external_session_id`, each = one `ai.agno_sessions.session_id`) before the
+> steps below (dedupe by message `id`, drop `system`/`from_history`, order by `created_at`). See ADR-0016
+> + `docs/architecture/03-agno-mapping.md`.
+
 ## Input
 
-- `agno_session_id` (= `session_id`), the tenant's `raw_history_retention_days`.
+- the conversation **thread** + its linked provider sessions
+  (`app_conversation_sessions.external_session_id`, each = one `ai.agno_sessions.session_id`); the
+  tenant's `raw_history_retention_days`. *(ADR-0016 — was a single `agno_session_id`.)*
 
 ## Algorithm
 
-1. **Load** the session row by `session_id` (read-only).
+1. **Load + merge** all the thread's linked provider sessions (read-only) via
+   `app_conversation_sessions.external_session_id` → `ai.agno_sessions` (ADR-0016).
 2. **Expand** `runs[]`, then each run's `messages[]`.
 3. **Filter:**
    - exclude `role = 'system'` (the system prompt repeats once per run);

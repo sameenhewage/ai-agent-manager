@@ -1,5 +1,10 @@
 # 04 — Dashboard & Analytics Data-Source Trace (Gate V2-DATA-SOURCE)
 
+> **⚠ PRE-ADR-0016 DATA-SOURCE AUDIT.** This describes **current session-grain** behavior. The **target
+> model is ADR-0016**: a conversation = a **customer/contact thread**, and provider sessions are **child
+> links** (`app_conversation_sessions`). **Do not** use this document as the target schema / read-path
+> contract. Target: `docs/architecture/09` + ADR-0016.
+
 - **Project:** `pepper-st-dashboard` · **App root:** `base-dashboard-app/`
 - **Gate:** V2-DATA-SOURCE — audit/report ONLY. **No** implementation, code, DB, migration, seed, sync, archive, loader, or metric changes were made. Read-only SQL only.
 - **Date:** 2026-06-16

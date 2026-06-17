@@ -2,7 +2,14 @@
 
 - **Status:** Phase 1 (docs-first) — documented seed/manual flow (no UI yet)
 - **Last updated:** 2026-06-15
-- **Related:** ADR-0002, `docs/architecture/04-multitenancy.md`
+- **Related:** ADR-0002, **ADR-0015**, **ADR-0016**, `docs/architecture/04-multitenancy.md`
+
+> **⚠ TARGET MODEL (2026-06-17) — ADR-0015 + ADR-0016.** Onboarding also creates a **default business**
+> under the tenant (`tenant ≠ business`; channels carry `business_id` + `type` + `external_channel_id`).
+> Conversations are **customer/contact threads** (`app_conversations`, one row per contact); Agno/provider
+> sessions link via **`app_conversation_sessions`** (`external_session_id` by value). `source_agent_id` is
+> a **legacy cache** — the agent key is **derived** `tenant_id:channel_id`. The steps below are the current
+> single-business seed flow (pre-migration). See `docs/architecture/09`.
 
 ## Goal
 

@@ -14,6 +14,13 @@ on Stage 1 read-only inspection (PostgreSQL 16.9).
 > `app_customer_identities` row in the mapping table below is therefore **obsolete**. Current contract:
 > `docs/database/03-dashboard-data-contract.md`.
 
+> **⚠ GRAIN REVISED (2026-06-17) — ADR-0016.** "Conversation grain (locked)" below is **superseded**: a
+> dashboard **conversation is a customer/contact thread** (one row **per contact**); each Agno session is
+> a **provider session** in the new **`app_conversation_sessions`** table (`external_session_id` ==
+> `session_id` by value, no FK). The **transcript build** must therefore **merge ALL of the thread's
+> sessions** (dedupe by message `id`, sort by `created_at`), not just one. See **ADR-0016** +
+> `docs/architecture/09`.
+
 ## Source of truth: `ai.agno_sessions`
 
 Columns (15): `session_id` (varchar PK), `session_type` (NOT NULL),
@@ -23,7 +30,7 @@ Columns (15): `session_id` (varchar PK), `session_type` (NOT NULL),
 
 Observed in demo data:
 
-- `session_id` = **WhatsApp phone number** (text, e.g. `9471…`). Global PK.
+- `session_id` = an **opaque 32-char token** (Global PK). *(Stage-1 v1 observed it as the phone; under ADR-0011 the phone moved to `user_id`.)*
 - `session_type = 'agent'`, `agent_id = 'concierge'` (single agent).
 - `created_at` / `updated_at` = **epoch seconds**.
 - `metadata` = **NULL**; `summary` = **NULL** (no AI summary/intent available).
@@ -38,8 +45,8 @@ Observed in demo data:
 
 | Dashboard concept | Source in `ai.agno_sessions` | Notes |
 |---|---|---|
-| `app_conversations.agno_session_id` | `session_id` | Link by value; no cross-schema FK |
-| `app_conversations.external_contact_id` | `session_id` | Same value in Phase 1 (phone) |
+| `app_conversation_sessions.external_session_id` *(ADR-0016; was `app_conversations.agno_session_id`)* | `session_id` | Link by value; no cross-schema FK |
+| `app_conversations.external_contact_id` | `user_id` | the contact phone (ADR-0011; **not** `session_id`); masked on read |
 | ~~`app_customer_identities.external_contact_id`~~ | — | **Removed in 12D-D / ADR-0012** — no identity table; the contact lives on `app_conversations.external_contact_id` (sourced from `user_id`, masked) |
 | `app_conversations.first_at` | `to_timestamp(created_at)` | epoch seconds → timestamptz |
 | `app_conversations.last_at` | `to_timestamp(updated_at)` | epoch seconds → timestamptz |
@@ -67,18 +74,21 @@ Resolving an `ai.agno_sessions` row to its dashboard channel/tenant must be
   future contract (ADR-0008) makes matches precise (business/channel/
   phone-number id).
 
-## Conversation grain (locked)
+## Conversation grain — REVISED (ADR-0016)
 
-**One `ai.agno_sessions` row (per phone) = one rolling `app_conversations`
-record.** New turns append to `runs[]`; `updated_at` advances; `last_at` is
-refreshed. Per-visit/per-day splitting is **parked** (`docs/phases/roadmap.md`).
+**Target:** a dashboard **conversation is a customer/contact thread** — **one `app_conversations` row per
+contact** (`tenant_id + business_id + channel_id + external_contact_id`) — and each Agno session is a
+**provider session** child in `app_conversation_sessions`. **One thread → many sessions.** (The old rule
+"one Agno session = one `app_conversations` row" is **superseded**; per-visit/per-day splitting stays
+**parked**.) The transcript **merges all of the thread's sessions**.
 
 ## Transcript build algorithm (read-only)
 
 Goal: a clean, ordered, human-readable transcript with no duplication and no
 system noise.
 
-1. Read the session by `agno_session_id` (= `session_id`).
+1. **(ADR-0016)** Read **all** the thread's sessions via `app_conversation_sessions.external_session_id`
+   (each = one `ai.agno_sessions.session_id`) and **merge** their runs before the steps below.
 2. Expand `runs[]` → for each run, expand `messages[]`.
 3. **Exclude** `role = 'system'` (system prompt repeats per run).
 4. **Dedupe by message `id`**; additionally drop `from_history = true` (replayed
@@ -133,9 +143,10 @@ See `docs/workflows/05-analytics-filter.md`.
 
 ## Production divergence (why fields are modelled separately)
 
-Today `agno_session_id == external_contact_id == phone`. Because
-`ai.agno_sessions.session_id` is a **global** PK and merely a phone number, it is
-unsafe for multi-tenant SaaS. The **future contract** (ADR-0008,
+*(v1, superseded — ADR-0011/0016.)* In v1 `agno_session_id == external_contact_id == phone`; since
+ADR-0011 they have **diverged** (phone → `user_id` → `external_contact_id`; `session_id` is an opaque
+token), and under ADR-0016 the session id lives on `app_conversation_sessions.external_session_id`. The
+original rationale — a **global** phone-PK is unsafe for multi-tenant SaaS — still holds. The **future contract** (ADR-0008,
 `docs/workflows/09-...`) requires Agno sessions to become tenant/channel-scoped
 or globally unique (agent/team/business/phone-number-id or a `metadata`
 contract). When that lands, `agno_session_id` and `external_contact_id` diverge

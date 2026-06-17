@@ -1,5 +1,13 @@
 # V2 / 02 — Relationships & Data Flow
 
+> **⚠ CURRENT PRE-ADR-0016 SNAPSHOT ONLY — NOT TARGET IMPLEMENTATION (2026-06-17).** This documents the
+> **current live** relationships (one `app_conversations` row per Agno session;
+> `app_conversations.agno_session_id = ai.agno_sessions.session_id`). The **target model is ADR-0016 /
+> `docs/architecture/09`**: `app_conversations` = **customer/contact thread**;
+> **`app_conversation_sessions.external_session_id = ai.agno_sessions.session_id`**;
+> `external_contact_id = ai.agno_sessions.user_id`. **Do not** use the diagram below as the target
+> schema / read-path contract.
+
 > All links below are **by value** across schemas (there is **no foreign key into
 > `ai.*`**). FK-backed links exist only *within* the `dashboard` schema. Cross-schema
 > links labelled **CONFIRMED** were verified by read-only `count(*)` joins on

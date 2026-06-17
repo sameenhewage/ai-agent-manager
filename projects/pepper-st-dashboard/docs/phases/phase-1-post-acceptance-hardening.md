@@ -39,6 +39,32 @@
 
 ---
 
+## Conversation-Boundary Gate — contact thread (ADR-0016) — DOCS/SCHEMA-PROPOSAL ONLY (2026-06-17)
+
+- **Type:** documentation + schema-proposal only. **No code, no migration, no DB write, no `ai.*`
+  change, no commit/push** in this gate. Preceded by a **read-only verification** (TD-090) that **proved
+  the defect on live data**: 19 `app_conversations` rows for 16 contacts; the visible Chat Monitor list
+  shows masked `94•••••273` **twice**; the transcript **parses one session** (misses the contact's other
+  sessions).
+- **Decision:** the **conversation = a customer/contact thread** (`app_conversations`, **one row per
+  contact**); each Agno session is an internal **provider session** (`app_conversation_sessions`).
+  **Supersedes `1 Agno session = 1 dashboard conversation`** (ADR-0016 — revises ADR-0003/0012, refines
+  ADR-0015). Boundary: `tenant_id + business_id + channel_id + external_contact_id` (transitional without
+  `business_id`).
+- **Proposed table:** `app_conversation_sessions` (provider session links; `external_session_id ==
+  ai.agno_sessions.session_id` **by value**, **no FK to `ai.*`**; `unique(tenant_id, provider,
+  external_session_id)`). Target schema becomes **8 core tables**; `agno_session_id` **moves off**
+  `app_conversations`.
+- **Blocks:** the contact-thread schema migration + Chat Monitor **read-path merge** + realtime
+  thread-targeting **until approved**. Migration is **expand → backfill → verify → enforce**
+  (non-destructive; collapse duplicate per-contact rows; drop `agno_session_id` from `app_conversations`).
+- **Effect on 12F:** realtime events target the **thread** (`conversation_id`); `provider_session_id` is
+  **server-side only**; the PII deny-list adds `external_session_id`/`provider_session_id`. The Chat
+  Monitor transcript must **merge linked sessions + dedupe by a stable provider message id** (replace the
+  positional `safeMessageId`).
+
+---
+
 ## Sequencing & dependencies
 
 ```

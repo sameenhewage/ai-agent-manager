@@ -53,8 +53,9 @@ at read time. It proves the architecture with the **smallest honest feature**.
 
 1. **Tenant isolation:** the list shows only conversations for the selected
    tenant; a second seeded tenant shows an empty list.
-2. **Mapping:** each listed conversation resolves to exactly one
-   `ai.agno_sessions` row via `agno_session_id`.
+2. **Mapping:** each listed conversation resolves to its linked Agno session(s).
+   *(This first-slice criterion assumed one session per conversation; under **ADR-0016** a conversation
+   is a contact thread that may link **many** `ai.agno_sessions` via `app_conversation_sessions`.)*
 3. **Masking:** no full phone number appears in UI or logs (e.g. `94•••••815`).
 4. **Transcript fidelity:** rendered messages contain **no `system` messages**,
    **no duplicates** (deduped by `id`), ordered by `created_at`; system prompt

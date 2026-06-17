@@ -11,6 +11,7 @@ import * as schema from "./schema";
 
 const ALLOWED = [
   "app_channels",
+  "app_conversation_sessions",
   "app_conversations",
   "app_tenant_entitlements",
   "app_tenants",
@@ -63,7 +64,7 @@ function uniqueSets(tableName: string) {
 }
 
 describe("dashboard schema — table set", () => {
-  it("defines exactly the four allowed tables (no customer/identity model — ADR-0012)", () => {
+  it("defines exactly the five allowed tables (adds app_conversation_sessions — ADR-0016; no customer/identity model — ADR-0012)", () => {
     expect([...byName.keys()].sort()).toEqual(ALLOWED);
   });
 
@@ -148,17 +149,27 @@ describe("app_conversations", () => {
     expect(status.default).toBe("open");
   });
 
-  // Slice 12D-B — lock the conversation GRAIN (the Agno-transcript boundary):
-  // one Agno session => exactly one conversation; one contact => MANY conversations.
-  it("is unique on (tenant_id, channel_id, agno_session_id) — exactly ONE conversation per Agno session (no session merging)", () => {
+  // Slice 12D-B / ADR-0016 Gate C.2 — the legacy (tenant, channel, agno_session_id) uniqueness is
+  // KEPT for compatibility until Gate C.3 drops agno_session_id. The ENFORCED grain is now the
+  // contact-thread unique index (asserted below).
+  it("keeps the legacy unique on (tenant_id, channel_id, agno_session_id) until Gate C.3 (compatibility)", () => {
     expect(uniqueSets("app_conversations")).toContain(
       ["tenant_id", "channel_id", "agno_session_id"].sort().join(",")
     );
   });
 
-  it("does NOT make external_contact_id unique — the same contact/mobile may own MANY conversations (one per Agno session)", () => {
-    const sets = uniqueSets("app_conversations");
-    expect(sets.some((s) => s.split(",").includes("external_contact_id"))).toBe(false);
+  // ADR-0016 Gate C.2 — the conversation grain is now the CONTACT THREAD: exactly ONE row per
+  // (tenant_id, channel_id, external_contact_id), enforced by a UNIQUE INDEX (applied after the
+  // live collapse). The legacy (tenant, channel, agno_session_id) unique stays until Gate C.3.
+  it("enforces ONE row per contact thread — a UNIQUE index on (tenant_id, channel_id, external_contact_id) (ADR-0016 Gate C.2)", () => {
+    const idx = table("app_conversations").indexes.find(
+      (i) => i.config.name === "app_conv_contact_thread_key"
+    );
+    expect(idx, "app_conv_contact_thread_key index must exist").toBeDefined();
+    expect(idx?.config.unique).toBe(true);
+    expect(
+      (idx?.config.columns as { name?: string }[]).map((c) => c.name).sort()
+    ).toEqual(["channel_id", "external_contact_id", "tenant_id"]);
   });
 
   it("stores NO transcript/message content (canonical transcript stays in ai.agno_sessions.runs — ADR-0004)", () => {
@@ -166,6 +177,67 @@ describe("app_conversations", () => {
     const forbidden = /(^|_)(runs?|messages?|content|body|transcript|text)(_|$)/i;
     const offenders = cols.filter((name) => forbidden.test(name));
     expect(offenders).toEqual([]);
+  });
+});
+
+// ADR-0016, Gate A (EXPAND ONLY): the provider/Agno session-link layer. app_conversations is becoming
+// the customer/contact thread; this child table holds one row per provider session, linked BY VALUE to
+// ai.agno_sessions.session_id (no cross-schema FK). The FINAL contact-thread uniqueness is NOT enforced here.
+describe("app_conversation_sessions (ADR-0016, Gate A — provider/session links)", () => {
+  it("links by FK ONLY to dashboard tables (conversation_id → app_conversations, tenant_id → app_tenants); NO FK into ai.*", () => {
+    const c = table("app_conversation_sessions");
+    const refTables = c.foreignKeys
+      .map((fk) => getTableConfig(fk.reference().foreignTable).name)
+      .sort();
+    expect(refTables).toEqual(["app_conversations", "app_tenants"]);
+    for (const fk of c.foreignKeys) {
+      expect(getTableConfig(fk.reference().foreignTable).schema).toBe("dashboard");
+    }
+  });
+
+  it("maps external_session_id BY VALUE (text, NOT NULL) with NO foreign key on it", () => {
+    const col = column("app_conversation_sessions", "external_session_id");
+    expect(col.getSQLType()).toBe("text");
+    expect(col.notNull).toBe(true);
+    for (const fk of table("app_conversation_sessions").foreignKeys) {
+      const localCols = fk.reference().columns.map((c) => c.name);
+      expect(localCols).not.toContain("external_session_id");
+    }
+  });
+
+  it("is unique on (tenant_id, provider, external_session_id) — one link per provider session", () => {
+    expect(uniqueSets("app_conversation_sessions")).toContain(
+      ["tenant_id", "provider", "external_session_id"].sort().join(",")
+    );
+  });
+
+  it("does NOT enforce the final contact-thread uniqueness yet (Gate A is expand-only)", () => {
+    const sets = uniqueSets("app_conversation_sessions");
+    expect(sets).not.toContain(
+      ["tenant_id", "channel_id", "external_contact_id"].sort().join(",")
+    );
+  });
+
+  it("provider defaults to 'agno' and is NOT NULL", () => {
+    const p = column("app_conversation_sessions", "provider");
+    expect(p.notNull).toBe(true);
+    expect(p.default).toBe("agno");
+  });
+
+  it("business_id is nullable (until the ADR-0015 business migration lands)", () => {
+    expect(column("app_conversation_sessions", "business_id").notNull).toBe(false);
+  });
+
+  it("requires tenant_id + conversation_id", () => {
+    for (const name of ["tenant_id", "conversation_id"]) {
+      expect(column("app_conversation_sessions", name).notNull).toBe(true);
+    }
+  });
+
+  it("stores NO transcript/message content (links only — ADR-0004)", () => {
+    const cols = table("app_conversation_sessions").columns.map((c) => c.name);
+    const forbidden = /(^|_)(runs?|messages?|content|body|transcript|text)(_|$)/i;
+    expect(cols.filter((name) => forbidden.test(name))).toEqual([]);
   });
 });
 

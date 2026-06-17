@@ -2,7 +2,13 @@
 
 - **Status:** Phase 1 (docs-first)
 - **Last updated:** 2026-06-16
-- **Related:** Workflow 02, ADR-0003, ADR-0008, **ADR-0012**
+- **Related:** Workflow 02, ADR-0003, ADR-0008, **ADR-0012**, **ADR-0016**
+
+> **⚠ ADR-0016 update (2026-06-17):** `app_conversations` is the **customer/contact thread** (one row
+> **per contact**); each Agno session is a **provider session** indexed in **`app_conversation_sessions`**
+> (`external_session_id` = `session_id`, by value). "One upsert per Agno session" below becomes
+> **find-or-create the thread, then upsert the provider-session link**. Conversation identity = the
+> contact thread, **not** `agno_session_id`.
 
 ## Goal
 
@@ -43,7 +49,9 @@ For a given tenant + channel (e.g. PEPPER ST. / `concierge`):
 
 ## Indexing fields
 
-- Unique: `(tenant_id, channel_id, agno_session_id)` **only** (conversation identity).
+- **Conversation (thread) identity (ADR-0016):** `(tenant_id, channel_id, external_contact_id)` — one
+  thread per contact (was `(tenant_id, channel_id, agno_session_id)`).
+- **Provider-session uniqueness:** `app_conversation_sessions (tenant_id, provider, external_session_id)`.
 - Non-unique index: `(tenant_id, channel_id, external_contact_id)` (contact lookup;
   a contact may have several conversations — ADR-0008/0012).
 - Order index: `(tenant_id, last_at DESC)` for the conversation list.

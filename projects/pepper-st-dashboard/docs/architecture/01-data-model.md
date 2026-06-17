@@ -1,8 +1,14 @@
 # Architecture 01 — Data Model
 
 - **Project:** pepper-st-dashboard
-- **Status:** Phase 1 (docs-first) — proposal
-- **Last updated:** 2026-06-15
+- **Status:** **Historical proposal — SUPERSEDED. Do NOT use as target schema.**
+- **Last updated:** 2026-06-15 (superseded 2026-06-17)
+
+> **⛔ HISTORICAL PROPOSAL ONLY — DO NOT USE AS TARGET SCHEMA.** The target schema is
+> **`docs/architecture/09-multi-business-branch-channel-strategy.md` + ADR-0016** (8 tables; conversation
+> = **customer/contact thread**; provider sessions in **`app_conversation_sessions`**). Everything below
+> is **Gate-1 historical design context**, superseded by ADR-0012 (customer/identity removed) and
+> ADR-0015/0016 (multi-business + contact-thread). See the detailed supersession banners below.
 
 Logical model for the `dashboard` schema. Physical SQL is in
 `02-schema-proposal.sql.md` (reviewable, **not applied**). Mapping to Agno is in
@@ -25,7 +31,13 @@ Logical model for the `dashboard` schema. Physical SQL is in
 > `app_ai_agent_bindings`, `app_realtime_outbox`, plus `business_id` (required) and `location_id`
 > (nullable) on `app_channels` + `app_conversations`. The 4-table description below is the **current
 > implementation** (migration via expand→backfill→verify→enforce is **approval-gated / not yet
-> applied**). ADR-0012's **by-value contact + grain-lock** principles are **kept**.
+> applied**). ADR-0012's **by-value contact** principle is **kept**.
+
+> **⚠ GRAIN REVISED (2026-06-17) — ADR-0016 / `architecture/09`.** The conversation grain is now the
+> **customer/contact thread** (one `app_conversations` row **per contact**), **not** one row per Agno
+> session. `agno_session_id` **moves off** `app_conversations` to **`app_conversation_sessions`**
+> (`external_session_id` == `ai.agno_sessions.session_id` by value, no FK). Full target schema = **8
+> tables**. **Supersedes `1 Agno session = 1 dashboard conversation`.**
 
 ## Entities and relationships
 

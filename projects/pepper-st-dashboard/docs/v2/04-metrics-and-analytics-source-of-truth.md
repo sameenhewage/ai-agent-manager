@@ -5,6 +5,11 @@
 > what the correct source would be. Source files: `lib/analytics/service.ts`,
 > `lib/analytics/universe.ts`, `lib/analytics/aggregate.ts`, `lib/analytics/ranges.ts`.
 
+> **⚠ Pre-ADR-0016 (2026-06-17).** This describes the **current** pre-ADR-0016 metrics behavior. **After
+> ADR-0016**, "conversations" mean **customer/contact threads**; provider sessions/visits are **separate
+> child records** (`app_conversation_sessions`) — so a "conversations" count becomes per-contact, and a
+> per-session/visit count is a distinct metric. Target: ADR-0016 / `docs/architecture/09`.
+
 ## 1. Current metric source (as built)
 
 Both the **Dashboard** and **Analytics** surfaces call the **same** function:
@@ -80,7 +85,10 @@ All bounds are computed in the **tenant timezone** (`app_tenants.timezone`, defa
 6. **new/returning is per-conversation, not per-contact.** Because one Agno session = one
    conversation (rolling grain), a returning *customer* with a new session counts as a new
    conversation; "returning" here means "conversation whose `firstAt` predates the range",
-   which is not the same as "returning customer".
+   which is not the same as "returning customer". **(ADR-0016 changes this — describes the current,
+   pre-ADR-0016 behavior.)** Once a **conversation = a customer/contact thread** (one row per contact;
+   sessions become `app_conversation_sessions` children), new/returning is naturally **per-contact** and
+   this distortion disappears.
 
 > **Net:** for **short ranges where each counted session lived entirely inside the range**
 > (e.g. *Today* with fresh sessions), the totals are effectively correct. The distortion
