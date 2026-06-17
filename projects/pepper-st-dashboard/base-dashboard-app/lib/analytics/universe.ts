@@ -13,10 +13,11 @@ import type { AnalyticsSessionInput } from "./aggregate";
  * fabricated metrics (ADR-0007): a missing live session yields honest zero/null.
  */
 
-/** Minimal `app_conversations` shape needed to build the analytics universe. */
+/** Minimal contact-thread shape needed to build the analytics universe. The provider session ids
+ *  come from app_conversation_sessions (ADR-0016 Gate C.3 — a thread may have MANY sessions). */
 export interface UniverseConversation {
   id: string;
-  agnoSessionId: string;
+  sessionIds: string[];
   status: string;
   firstAt: Date | null;
   lastAt: Date | null;
@@ -39,11 +40,12 @@ export function isActiveConversation(c: { status: string }): boolean {
   return c.status !== ARCHIVED;
 }
 
-/** De-duplicated, non-empty session ids — the `session_id = ANY($ids)` lookup key set. */
-export function collectSessionIds(conversations: { agnoSessionId: string }[]): string[] {
+/** De-duplicated, non-empty session ids across ALL conversations' linked provider sessions —
+ *  the `session_id = ANY($ids)` lookup key set. */
+export function collectSessionIds(conversations: { sessionIds: string[] }[]): string[] {
   const ids = new Set<string>();
   for (const c of conversations) {
-    if (c.agnoSessionId) ids.add(c.agnoSessionId);
+    for (const sid of c.sessionIds) if (sid) ids.add(sid);
   }
   return [...ids];
 }
@@ -60,35 +62,44 @@ function num(value: string | null): number | null {
 }
 
 /**
- * Build ONE analytics input from a mapped conversation + its (optional) live session row.
- * Turn/message counts come from parsing the session's `runs`; token/cost from
- * `session_metrics`. A missing live session => zero turns/messages + null token/cost.
+ * Build ONE analytics input for a contact thread by AGGREGATING across ALL its linked provider
+ * sessions (ADR-0016 Gate C.3). Turn/message counts come from parsing each session's `runs`;
+ * token/cost are summed from `session_metrics`. Sessions absent from the live set contribute
+ * nothing; a thread with NO live session yields honest zero turns/messages + null token/cost.
  */
 export function toAnalyticsInput(
   c: UniverseConversation,
-  row: SessionMetricsRow | undefined,
+  byId: Map<string, SessionMetricsRow>,
   now: Date
 ): AnalyticsSessionInput {
   let turnCount = 0;
   let messageCount = 0;
-  if (row) {
+  let totalTokens: number | null = null;
+  let cost: number | null = null;
+  for (const sid of c.sessionIds) {
+    const row = byId.get(sid);
+    if (!row) continue;
     const session: AgnoSession = {
-      session_id: c.agnoSessionId,
+      session_id: sid,
       runs: (Array.isArray(row.runs) ? row.runs : null) as AgnoSession["runs"],
       created_at: row.created_at != null ? Number(row.created_at) : null,
       updated_at: row.updated_at != null ? Number(row.updated_at) : null,
     };
     // Analytics cap is applied at the RANGE level by the caller, not per message.
     const parsed = parseTranscript(session, { retentionDays: null, now });
-    turnCount = parsed.turnCount;
-    messageCount = parsed.messageCount;
+    turnCount += parsed.turnCount;
+    messageCount += parsed.messageCount;
+    const t = num(row.total_tokens);
+    if (t != null) totalTokens = (totalTokens ?? 0) + t;
+    const co = num(row.cost);
+    if (co != null) cost = (cost ?? 0) + co;
   }
   return {
     conversationId: c.id,
     firstAt: c.firstAt ?? null,
     lastAt: c.lastAt ?? null,
-    totalTokens: row ? num(row.total_tokens) : null,
-    cost: row ? num(row.cost) : null,
+    totalTokens,
+    cost,
     turnCount,
     messageCount,
   };
@@ -107,5 +118,5 @@ export function buildAnalyticsInputs(
   const byId = indexSessionsById(rows);
   return conversations
     .filter(isActiveConversation)
-    .map((c) => toAnalyticsInput(c, byId.get(c.agnoSessionId), now));
+    .map((c) => toAnalyticsInput(c, byId, now));
 }

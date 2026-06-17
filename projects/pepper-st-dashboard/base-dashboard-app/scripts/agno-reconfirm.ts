@@ -94,7 +94,11 @@ async function main() {
             (select count(*)::int from ai.agno_sessions) as live_sessions_total,
             (select count(*)::int from ai.agno_sessions s, ch where s.agent_id = ch.source_agent_id) as live_sessions_for_configured_agent,
             (select count(*)::int from dashboard.app_conversations c join dashboard.app_tenants t on t.id=c.tenant_id where t.slug='pepper-st') as dashboard_conversations,
-            (select count(*)::int from dashboard.app_conversations c join dashboard.app_tenants t on t.id=c.tenant_id join ai.agno_sessions s on s.session_id=c.agno_session_id where t.slug='pepper-st') as mapped_to_live_session`
+            (select count(distinct c.id)::int from dashboard.app_conversations c
+               join dashboard.app_tenants t on t.id=c.tenant_id
+               join dashboard.app_conversation_sessions l on l.conversation_id=c.id
+               join ai.agno_sessions s on s.session_id=l.external_session_id
+              where t.slug='pepper-st') as mapped_to_live_session`
   );
 
   // --- AI-dev confirmed contract (Slice 11B): agent_id == tenant_id:channel_id ---

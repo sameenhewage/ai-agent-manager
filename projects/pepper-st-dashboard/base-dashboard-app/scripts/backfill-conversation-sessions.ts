@@ -56,6 +56,23 @@ async function main() {
   const pool = getPool();
   console.log(`[sessions:backfill] ${maskDbUrl()} ${CONFIRM ? "(APPLY)" : "(DRY RUN)"}`);
 
+  // ADR-0016 Gate C.3: app_conversations.agno_session_id was REMOVED. This one-time Gate A
+  // backfill is complete and retired — the sync now writes provider session links directly.
+  // Guard so a post-C.3 run exits clearly instead of failing on the missing column.
+  const guard = await pool.query<{ present: boolean }>(
+    `select exists(select 1 from information_schema.columns
+       where table_schema = 'dashboard' and table_name = 'app_conversations'
+         and column_name = 'agno_session_id') as present`
+  );
+  if (!guard.rows[0].present) {
+    console.log(
+      "[sessions:backfill] RETIRED — agno_session_id no longer exists (Gate C.3). The backfill is\n" +
+        "  complete; provider session links are now written by the sync. No action taken."
+    );
+    await pool.end();
+    process.exit(0);
+  }
+
   // Pre-count (read-only): how many links SHOULD exist vs already exist.
   const pre = await pool.query<{ with_session: number; existing_links: number }>(
     `select

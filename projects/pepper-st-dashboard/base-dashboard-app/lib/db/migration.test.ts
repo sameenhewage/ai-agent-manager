@@ -162,8 +162,8 @@ describe("Gate A — app_conversation_sessions expand migration (ADR-0016)", () 
 
 // ADR-0016, Gate C.2 — ENFORCE one row per contact thread. The collapse itself runs as a separate
 // reversible SCRIPT (scripts/collapse-contact-threads.ts); the migration is DDL-only: it adds the
-// contact-thread UNIQUE index and drops the former non-unique contact index. agno_session_id and
-// its legacy uniqueness are intentionally retained (removed later in Gate C.3).
+// contact-thread UNIQUE index and drops the former non-unique contact index. (agno_session_id and
+// its legacy uniqueness were removed later, in Gate C.3 — asserted in the next block.)
 describe("Gate C.2 — contact-thread uniqueness migration (ADR-0016)", () => {
   it("adds a UNIQUE index on (tenant_id, channel_id, external_contact_id)", () => {
     expect(sql).toMatch(
@@ -175,7 +175,37 @@ describe("Gate C.2 — contact-thread uniqueness migration (ADR-0016)", () => {
     expect(sql).toMatch(/DROP INDEX IF EXISTS "dashboard"\."app_conv_contact_idx"/);
   });
 
-  it("does NOT drop app_conversations.agno_session_id in this gate (that is Gate C.3)", () => {
-    expect(sql).not.toMatch(/alter table[^;]*"app_conversations"[^;]*drop column[^;]*"agno_session_id"/i);
+  it("adds the contact-thread index in C.2 (the agno_session_id drop is a SEPARATE later migration)", () => {
+    // The C.2 migration body itself only adds the unique index + drops the non-unique contact index.
+    const c2 = sqlFiles
+      .filter((f) => /motionless_fabian_cortez/.test(f))
+      .map((f) => readFileSync(join(drizzleDir, f), "utf8"))
+      .join("\n");
+    expect(c2).not.toMatch(/drop column[^;]*"agno_session_id"/i);
+  });
+});
+
+// ADR-0016, Gate C.3 — DROP the legacy per-session column + its uniqueness. DDL-only; dashboard-only.
+// All runtime code was migrated to source sessions from app_conversation_sessions BEFORE this drop.
+describe("Gate C.3 — drop legacy agno_session_id (ADR-0016)", () => {
+  it("drops the app_conv_agno_unique CONSTRAINT (not a plain index)", () => {
+    expect(sql).toMatch(
+      /ALTER TABLE "dashboard"\."app_conversations" DROP CONSTRAINT IF EXISTS "app_conv_agno_unique"/
+    );
+    // a UNIQUE constraint's backing index must be dropped via DROP CONSTRAINT, never DROP INDEX
+    expect(sql).not.toMatch(/DROP INDEX[^;]*"app_conv_agno_unique"/i);
+  });
+
+  it("drops the agno_session_id column from app_conversations", () => {
+    expect(sql).toMatch(
+      /ALTER TABLE "dashboard"\."app_conversations" DROP COLUMN IF EXISTS "agno_session_id"/
+    );
+  });
+
+  it("drops the CONSTRAINT before the COLUMN", () => {
+    const constraintIdx = sql.search(/DROP CONSTRAINT IF EXISTS "app_conv_agno_unique"/);
+    const columnIdx = sql.search(/DROP COLUMN IF EXISTS "agno_session_id"/);
+    expect(constraintIdx).toBeGreaterThanOrEqual(0);
+    expect(columnIdx).toBeGreaterThan(constraintIdx);
   });
 });

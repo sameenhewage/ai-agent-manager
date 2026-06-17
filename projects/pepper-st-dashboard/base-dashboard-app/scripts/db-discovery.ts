@@ -225,12 +225,15 @@ async function main() {
   if (hasAi) {
     await q(
       "C4 mapping coverage (concierge)",
+      // Gate C.3: agno_session_id was removed — coverage is derived via app_conversation_sessions links.
       `select (select count(*) from ai.agno_sessions where agent_id='concierge') concierge_sessions,
               (select count(*) from dashboard.app_conversations) mapped_conversations,
               (select count(*) from ai.agno_sessions s where s.agent_id='concierge'
-                 and not exists (select 1 from dashboard.app_conversations c where c.agno_session_id=s.session_id)) unmapped_sessions,
+                 and not exists (select 1 from dashboard.app_conversation_sessions l where l.external_session_id=s.session_id)) unmapped_sessions,
               (select count(*) from dashboard.app_conversations c
-                 where not exists (select 1 from ai.agno_sessions s where s.session_id=c.agno_session_id and s.agent_id='concierge')) orphan_conversations`
+                 where not exists (select 1 from dashboard.app_conversation_sessions l
+                    join ai.agno_sessions s on s.session_id=l.external_session_id and s.agent_id='concierge'
+                   where l.conversation_id=c.id)) orphan_conversations`
     );
   }
 

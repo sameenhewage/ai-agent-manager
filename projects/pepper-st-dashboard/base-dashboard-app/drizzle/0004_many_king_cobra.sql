@@ -1,0 +1,2 @@
+ALTER TABLE "dashboard"."app_conversations" DROP CONSTRAINT IF EXISTS "app_conv_agno_unique";--> statement-breakpoint
+ALTER TABLE "dashboard"."app_conversations" DROP COLUMN IF EXISTS "agno_session_id";

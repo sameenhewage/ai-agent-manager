@@ -1,13 +1,23 @@
-import { and, eq, gte, lt, ne } from "drizzle-orm";
+import { and, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import * as schema from "../db/schema";
-import { appChannels, appConversations, appTenantEntitlements } from "../db/schema";
+import {
+  appChannels,
+  appConversations,
+  appConversationSessions,
+  appTenantEntitlements,
+} from "../db/schema";
 import { resolveCurrentTenant } from "../tenant/context";
 import { deriveExpectedAgentId } from "../agno/mapping";
 import { clampToRetention, DEFAULT_TIME_ZONE, resolveRange, type RangeKey } from "./ranges";
 import { aggregateAnalytics, type AnalyticsTotals, type DailyPoint } from "./aggregate";
-import { buildAnalyticsInputs, collectSessionIds, type SessionMetricsRow } from "./universe";
+import {
+  buildAnalyticsInputs,
+  collectSessionIds,
+  type SessionMetricsRow,
+  type UniverseConversation,
+} from "./universe";
 import { computeUniverseCoverage, type UniverseCoverage } from "./coverage";
 
 /**
@@ -167,15 +177,48 @@ export async function getAnalyticsData(
       )
     );
 
+  // ADR-0016 Gate C.3: a contact thread's provider sessions live in app_conversation_sessions.
+  // Load every link for this universe and group by conversation so analytics AGGREGATES across
+  // all of a contact's sessions (not just one legacy canonical id).
+  const conversationIds = conversations.map((c) => c.id);
+  const linkRows = conversationIds.length
+    ? await db
+        .select({
+          conversationId: appConversationSessions.conversationId,
+          externalSessionId: appConversationSessions.externalSessionId,
+        })
+        .from(appConversationSessions)
+        .where(
+          and(
+            eq(appConversationSessions.tenantId, tenant.id),
+            inArray(appConversationSessions.conversationId, conversationIds)
+          )
+        )
+    : [];
+  const sessionIdsByConversation = new Map<string, string[]>();
+  for (const l of linkRows) {
+    if (!l.externalSessionId) continue;
+    const arr = sessionIdsByConversation.get(l.conversationId);
+    if (arr) arr.push(l.externalSessionId);
+    else sessionIdsByConversation.set(l.conversationId, [l.externalSessionId]);
+  }
+  const universe: UniverseConversation[] = conversations.map((c) => ({
+    id: c.id,
+    sessionIds: sessionIdsByConversation.get(c.id) ?? [],
+    status: c.status,
+    firstAt: c.firstAt,
+    lastAt: c.lastAt,
+  }));
+
   // READ-ONLY Agno read: fetch ONLY this universe's sessions BY `session_id` (PK), never a
   // `WHERE agent_id = $1` scan. Joined in memory by value into PII-free analytics inputs.
-  const sessionIds = collectSessionIds(conversations);
+  const sessionIds = collectSessionIds(universe);
   const rows = await readSessionMetricsByIds(
     pool,
     sessionIds,
     deriveExpectedAgentId(channel.tenantId, channel.id)
   );
-  const inputs = buildAnalyticsInputs(conversations, rows, now);
+  const inputs = buildAnalyticsInputs(universe, rows, now);
 
   const { totals, series } = aggregateAnalytics(inputs, { from, to, timeZone });
 
@@ -183,8 +226,10 @@ export async function getAnalyticsData(
   // against the VALID LIVE sessions for this range, so unmapped/unsynced sessions are
   // surfaced as explicit, masked exclusions instead of being silently dropped. READ-ONLY.
   const agentId = deriveExpectedAgentId(channel.tenantId, channel.id);
-  const archivedRows = await db
-    .select({ sid: appConversations.agnoSessionId })
+  // Archived (retired) contact threads' provider session ids — sourced from the session links
+  // (Gate C.3: there is no agno_session_id column). Used only for coverage reconciliation.
+  const archivedConvs = await db
+    .select({ id: appConversations.id })
     .from(appConversations)
     .where(
       and(
@@ -193,11 +238,27 @@ export async function getAnalyticsData(
         eq(appConversations.status, "archived")
       )
     );
+  const archivedSessionIds = archivedConvs.length
+    ? (
+        await db
+          .select({ sid: appConversationSessions.externalSessionId })
+          .from(appConversationSessions)
+          .where(
+            and(
+              eq(appConversationSessions.tenantId, tenant.id),
+              inArray(
+                appConversationSessions.conversationId,
+                archivedConvs.map((c) => c.id)
+              )
+            )
+          )
+      ).map((r) => r.sid)
+    : [];
   const liveValidSessionIds = await readLiveValidSessionIds(pool, agentId, from, to);
   const coverage = computeUniverseCoverage({
     liveValidSessionIds,
     activeMappedSessionIds: sessionIds,
-    archivedSessionIds: archivedRows.map((r) => r.sid),
+    archivedSessionIds,
   });
 
   return {

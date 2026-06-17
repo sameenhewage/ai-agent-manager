@@ -7,7 +7,8 @@ import { maskContactId } from "../lib/agno/mask";
  *
  * Proves (masked, counts/shapes only — never raw phone / user_id / external_contact_id /
  * external_session_id / agno_session_id):
- *   1. every existing app_conversations.agno_session_id has EXACTLY ONE app_conversation_sessions link;
+ *   0. the legacy app_conversations.agno_session_id column + app_conv_agno_unique constraint are GONE (Gate C.3);
+ *   1. every app_conversations row has at least one app_conversation_sessions link;
  *   2. app_conversation_sessions.external_session_id is UNIQUE per (tenant, provider);
  *   3. no ai.* rows changed   (this session is pinned default_transaction_read_only = on; ai.* never written);
  *   4. no existing app_conversations rows deleted (every link still resolves to a live conversation row);
@@ -54,51 +55,59 @@ async function main() {
     console.log(`app_conversation_sessions present  : ${tablePresent ? "yes" : "NO (Gate A migration not applied yet)"}`);
 
     // Informational counts (no PII).
-    const counts = await client.query<{ conversations: number; with_session: number; ai_sessions: number }>(
+    const counts = await client.query<{ conversations: number; ai_sessions: number }>(
       `select
          (select count(*)::int from dashboard.app_conversations) as conversations,
-         (select count(*)::int from dashboard.app_conversations
-            where agno_session_id is not null and agno_session_id <> '') as with_session,
          (select count(*)::int from ai.agno_sessions) as ai_sessions`
     );
-    const { conversations, with_session, ai_sessions } = counts.rows[0];
+    const { conversations, ai_sessions } = counts.rows[0];
     console.log(`app_conversations rows             : ${conversations}`);
-    console.log(`  with agno_session_id             : ${with_session}`);
-    console.log(`ai.agno_sessions rows (read-only)  : ${ai_sessions}  (check 3: never written by Gate A)`);
+    console.log(`ai.agno_sessions rows (read-only)  : ${ai_sessions}  (read-only; never written)`);
+
+    // --- Check 0 (Gate C.3): legacy agno_session_id column + app_conv_agno_unique constraint are GONE ---
+    const legacy = await client.query<{ col_present: boolean; constraint_present: boolean }>(
+      `select
+         exists(select 1 from information_schema.columns
+                 where table_schema = 'dashboard' and table_name = 'app_conversations'
+                   and column_name = 'agno_session_id') as col_present,
+         exists(select 1 from pg_constraint
+                 where conname = 'app_conv_agno_unique'
+                   and conrelid = 'dashboard.app_conversations'::regclass) as constraint_present`
+    );
+    check(
+      "0. legacy app_conversations.agno_session_id column REMOVED (Gate C.3)",
+      legacy.rows[0].col_present === false,
+      legacy.rows[0].col_present ? "STILL PRESENT" : "absent"
+    );
+    check(
+      "0b. legacy app_conv_agno_unique constraint REMOVED (Gate C.3)",
+      legacy.rows[0].constraint_present === false,
+      legacy.rows[0].constraint_present ? "STILL PRESENT" : "absent"
+    );
 
     if (tablePresent) {
-      // --- Check 1: every conversation with a session id has EXACTLY ONE link ---
+      // --- Check 1: every conversation has at least one provider session link ---
       const link = await client.query<{
         links: number;
         linked_convs: number;
-        unlinked: number;
-        cross_channel_collisions: number;
+        convs_without_links: number;
       }>(
         `select
            (select count(*)::int from dashboard.app_conversation_sessions) as links,
            (select count(distinct conversation_id)::int from dashboard.app_conversation_sessions) as linked_convs,
            (select count(*)::int
               from dashboard.app_conversations c
-             where c.agno_session_id is not null and c.agno_session_id <> ''
-               and not exists (
-                 select 1 from dashboard.app_conversation_sessions s
-                  where s.tenant_id = c.tenant_id and s.provider = 'agno'
-                    and s.external_session_id = c.agno_session_id)) as unlinked,
-           -- same (tenant, agno_session_id) shared by >1 conversation (e.g. across channels) — Gate C concern
-           (select coalesce(sum(n - 1), 0)::int from (
-              select tenant_id, agno_session_id, count(*) n
-                from dashboard.app_conversations
-               where agno_session_id is not null and agno_session_id <> ''
-               group by 1, 2 having count(*) > 1) d) as cross_channel_collisions`
+             where not exists (
+               select 1 from dashboard.app_conversation_sessions s
+                where s.conversation_id = c.id)) as convs_without_links`
       );
-      const { links, linked_convs, unlinked, cross_channel_collisions } = link.rows[0];
+      const { links, linked_convs, convs_without_links } = link.rows[0];
       console.log(`session links                      : ${links}`);
       console.log(`distinct linked conversations      : ${linked_convs}`);
-      console.log(`cross-(tenant,session) collisions  : ${cross_channel_collisions} (informational; Gate C)`);
       check(
-        "1. every app_conversations.agno_session_id has a session link (0 unlinked)",
-        Number(unlinked) === 0,
-        `unlinked=${unlinked}`
+        "1. every app_conversations row has >=1 provider session link (0 without links)",
+        Number(convs_without_links) === 0,
+        `without_links=${convs_without_links}`
       );
       // ADR-0016/C.2: a contact thread may hold MANY provider sessions, so links >= conversations
       // (NOT 1:1). The invariant is: EVERY conversation is linked (distinct linked == total convs).

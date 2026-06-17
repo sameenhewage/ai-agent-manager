@@ -54,17 +54,26 @@ async function main() {
   const namedCount = list.conversations.filter((c) => c.displayName != null && c.displayName !== "").length;
   console.log(`with customer name     : ${namedCount}/${list.conversations.length} (ai.customers.name; names not printed)`);
 
-  // The raw phone / session ids that MUST NOT appear in either payload.
-  const raw = await pool.query<{ external_contact_id: string; agno_session_id: string }>(
-    `select c.external_contact_id, c.agno_session_id
+  // The raw phone / session ids that MUST NOT appear in either payload. ADR-0016 Gate C.3: provider
+  // session ids now live in app_conversation_sessions (no agno_session_id column on conversations).
+  const rawContacts = await pool.query<{ external_contact_id: string }>(
+    `select c.external_contact_id
        from dashboard.app_conversations c
        join dashboard.app_tenants t on t.id = c.tenant_id
       where t.slug = 'pepper-st'`
   );
+  const rawSessions = await pool.query<{ external_session_id: string }>(
+    `select l.external_session_id
+       from dashboard.app_conversation_sessions l
+       join dashboard.app_tenants t on t.id = l.tenant_id
+      where t.slug = 'pepper-st'`
+  );
   const rawIds = new Set<string>();
-  for (const r of raw.rows) {
+  for (const r of rawContacts.rows) {
     if (r.external_contact_id) rawIds.add(String(r.external_contact_id));
-    if (r.agno_session_id) rawIds.add(String(r.agno_session_id));
+  }
+  for (const r of rawSessions.rows) {
+    if (r.external_session_id) rawIds.add(String(r.external_session_id));
   }
   const leaks = (s: string) => [...rawIds].filter((id) => id.length >= 6 && s.includes(id));
 

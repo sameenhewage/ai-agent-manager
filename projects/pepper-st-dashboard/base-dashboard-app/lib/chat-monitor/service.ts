@@ -125,10 +125,36 @@ export async function getConversationList(
       )
     );
 
-  // Turn counts (always) + an optional last-message preview (Chat Monitor list only).
-  // Slice 12D: fetch BY `session_id` (PK) for THIS universe, not a `WHERE agent_id = $1`
-  // sequential scan. `agent_id` is retained as a defensive scope filter (mapping parity).
-  const sessionIds = [...new Set(conversations.map((c) => c.agnoSessionId).filter(Boolean))];
+  // ADR-0016 Gate C.3: a contact thread's provider sessions live in app_conversation_sessions
+  // (NOT a single canonical agno_session_id). Load every link for this universe and group the
+  // session ids per conversation so turns/preview aggregate across ALL of a contact's sessions.
+  const conversationIds = conversations.map((c) => c.id);
+  const linkRows = conversationIds.length
+    ? await db
+        .select({
+          conversationId: appConversationSessions.conversationId,
+          externalSessionId: appConversationSessions.externalSessionId,
+        })
+        .from(appConversationSessions)
+        .where(
+          and(
+            eq(appConversationSessions.tenantId, tenant.id),
+            eq(appConversationSessions.provider, "agno"),
+            inArray(appConversationSessions.conversationId, conversationIds)
+          )
+        )
+    : [];
+  const sessionIdsByConversation = new Map<string, string[]>();
+  for (const l of linkRows) {
+    if (!l.externalSessionId) continue;
+    const arr = sessionIdsByConversation.get(l.conversationId);
+    if (arr) arr.push(l.externalSessionId);
+    else sessionIdsByConversation.set(l.conversationId, [l.externalSessionId]);
+  }
+  // Turn counts (always) + an optional last-message preview (Chat Monitor list only). Slice 12D:
+  // fetch BY `session_id` (PK) for THIS universe, not a `WHERE agent_id = $1` scan. `agent_id` is
+  // retained as a defensive scope filter (mapping parity).
+  const sessionIds = [...new Set(linkRows.map((l) => l.externalSessionId).filter(Boolean))];
   const turnsBySession = new Map<string, number>();
   const previewBySession = new Map<string, LastDisplayableMessage | null>();
 
@@ -190,11 +216,32 @@ export async function getConversationList(
     for (const r of turnRows.rows) turnsBySession.set(String(r.session_id), Number(r.turns) || 0);
   }
 
+  // Aggregate ACROSS all of a conversation's linked sessions (ADR-0016 Gate C.3): turn count =
+  // sum of every linked session's turns; preview = the latest displayable message among them.
   const turnCountById = new Map(
-    conversations.map((c) => [c.id, turnsBySession.get(c.agnoSessionId) ?? 0])
+    conversations.map((c) => [
+      c.id,
+      (sessionIdsByConversation.get(c.id) ?? []).reduce(
+        (sum, sid) => sum + (turnsBySession.get(sid) ?? 0),
+        0
+      ),
+    ])
   );
   const previewByConversationId = new Map(
-    conversations.map((c) => [c.id, previewBySession.get(c.agnoSessionId) ?? null])
+    conversations.map((c) => {
+      let preview: LastDisplayableMessage | null = null;
+      let previewAt = Number.NEGATIVE_INFINITY;
+      for (const sid of sessionIdsByConversation.get(c.id) ?? []) {
+        const p = previewBySession.get(sid) ?? null;
+        if (!p) continue;
+        const at = p.at ? Date.parse(p.at) : Number.NEGATIVE_INFINITY;
+        if (preview == null || at >= previewAt) {
+          preview = p;
+          previewAt = at;
+        }
+      }
+      return [c.id, preview] as const;
+    })
   );
 
   // AI-owned customer display names (READ-ONLY), joined by value on (tenant, channel, phone).
@@ -232,8 +279,8 @@ export async function getConversationList(
  * Shared READ-ONLY loader for a CONTACT THREAD (ADR-0016 Gate B). Validates the id (UUID), loads the
  * selected `app_conversations` row scoped by tenant + channel (IDOR guard), then EXPANDS to the full
  * contact thread: all non-archived conversations for the same (tenant, channel, external_contact_id)
- * boundary. It gathers every linked provider session id (`app_conversation_sessions` UNION the
- * conversations' own `agno_session_id`), reads the matching `ai.agno_sessions` rows (READ-ONLY, BY
+ * boundary. It gathers every linked provider session id from `app_conversation_sessions`, reads the
+ * matching `ai.agno_sessions` rows (READ-ONLY, BY
  * value), and MERGES them (dedupe by provider message id, time-sorted, retention applied). Sessions
  * absent from `ai.agno_sessions` (archived/legacy) are skipped — never a crash. Returns null for a
  * malformed/foreign id. Raw session/runs/contact ids NEVER leave this module.
@@ -274,8 +321,9 @@ async function loadContactThreadForRead(db: Db, pool: Pool, conversationId: stri
   const members = [...memberById.values()];
   const memberIds = members.map((m) => m.id);
 
-  // 3) Collect provider session ids: ADR-0016 links for these conversations UNION the conversations'
-  //    own agno_session_id (backward-compatible with any not-yet-linked row). De-duplicated by value.
+  // 3) Collect provider session ids from the ADR-0016 links for these conversations (Gate C.3:
+  //    the legacy agno_session_id fallback is gone — every session lives in the link table).
+  //    De-duplicated by value.
   const linkRows = await db
     .select({ externalSessionId: appConversationSessions.externalSessionId })
     .from(appConversationSessions)
@@ -288,7 +336,6 @@ async function loadContactThreadForRead(db: Db, pool: Pool, conversationId: stri
     );
   const sessionIdSet = new Set<string>();
   for (const l of linkRows) if (l.externalSessionId) sessionIdSet.add(l.externalSessionId);
-  for (const m of members) if (m.agnoSessionId) sessionIdSet.add(m.agnoSessionId);
   const sessionIds = [...sessionIdSet];
 
   const now = new Date();

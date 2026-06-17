@@ -133,9 +133,9 @@ export function createDrizzleGateway(db: Db): SyncGateway {
         .values({
           tenantId: values.tenantId,
           channelId: values.channelId,
-          // Compatibility (Gate C.2): agno_session_id stays NOT NULL — store the CURRENT session id
-          // as a temporary legacy value. It is NO LONGER the identity key (removed in Gate C.3).
-          agnoSessionId: values.agnoSessionId,
+          // ADR-0016 Gate C.3: agno_session_id is GONE. The conversation is the contact thread
+          // (keyed by external_contact_id); the provider session id is written ONLY to the
+          // app_conversation_sessions link below (upsertSessionLink).
           externalContactId: values.externalContactId,
           status: values.status,
           firstAt: values.firstAt,

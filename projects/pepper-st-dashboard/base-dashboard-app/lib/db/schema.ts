@@ -22,7 +22,7 @@ import {
  * app_customer_identities CRM model — `ai.customers` owns the contact registry.
  * Multi-tenant from day one; every operational row carries `tenant_id`. The canonical transcript stays in the Agno/WhatsApp
  * pipeline — there is NO message table and NO foreign key into `ai.*`
- * (`agno_session_id` links by value only). Entitlements carry NO hidden product
+ * (`app_conversation_sessions.external_session_id` links by value only). Entitlements carry NO hidden product
  * defaults: `plan_code` / `is_fully_enabled` are NOT NULL with no default;
  * retention columns are nullable with no default (NULL = unlimited).
  */
@@ -85,10 +85,11 @@ export const appChannels = dashboard.table(
 );
 
 /**
- * Lightweight index/status row for ONE Agno session (Slice 12D-D / ADR-0012). NO message
- * bodies; NO FK into `ai.*`; NO customer/identity model — the contact is stored by value on
- * `external_contact_id` (the AI platform's `ai.customers` / `ai.agno_sessions.user_id` is the
- * canonical contact registry). One Agno session => one row; one contact => MANY rows.
+ * Lightweight CONTACT-THREAD index/status row (ADR-0012; contact-thread grain ADR-0016 Gate C.2/C.3).
+ * NO message bodies; NO FK into `ai.*`; NO customer/identity model — the contact is stored by value
+ * on `external_contact_id` (the AI platform's `ai.customers` / `ai.agno_sessions.user_id` is the
+ * canonical contact registry). ONE row per contact thread; the per-session provider links live in
+ * `app_conversation_sessions` (Gate C.3 removed the legacy per-session `agno_session_id`).
  */
 export const appConversations = dashboard.table(
   "app_conversations",
@@ -100,8 +101,6 @@ export const appConversations = dashboard.table(
     channelId: uuid("channel_id")
       .notNull()
       .references(() => appChannels.id, { onDelete: "cascade" }),
-    // Link by value to ai.agno_sessions.session_id — deliberately NO cross-schema FK.
-    agnoSessionId: text("agno_session_id").notNull(),
     // The external contact id (WhatsApp phone or opaque user_id) lives directly here and is
     // masked on read. NO customer/identity table (ADR-0012); `ai.customers` is the registry.
     externalContactId: text("external_contact_id").notNull(),
@@ -112,8 +111,6 @@ export const appConversations = dashboard.table(
     updatedAt: tz("updated_at").notNull().defaultNow(),
   },
   (t) => [
-    // Legacy session-grain uniqueness — KEPT for compatibility until Gate C.3 drops agno_session_id.
-    unique("app_conv_agno_unique").on(t.tenantId, t.channelId, t.agnoSessionId),
     check(
       "app_conv_status_check",
       sql`${t.status} in ('open','resolved','archived')`
@@ -134,8 +131,8 @@ export const appConversations = dashboard.table(
  * Provider/Agno session links for a conversation/contact thread (ADR-0016, Gate A — EXPAND ONLY).
  * One row per provider session. `external_session_id` maps **by value** to `ai.agno_sessions.session_id`
  * — deliberately **NO** cross-schema FK into `ai.*`. `app_conversations` is becoming the customer/contact
- * thread; this child table holds the per-session links. Gate A is ADDITIVE: `app_conversations.agno_session_id`
- * remains for compatibility, and the final contact-thread uniqueness is **NOT** enforced yet (Gate C).
+ * thread; this child table holds the per-session links. Gate C.3 removed the legacy
+ * `app_conversations.agno_session_id` — provider session ids now live ONLY on this table.
  * `business_id` is nullable until the ADR-0015 business migration lands (so `app_businesses` exists to FK to).
  */
 export const appConversationSessions = dashboard.table(

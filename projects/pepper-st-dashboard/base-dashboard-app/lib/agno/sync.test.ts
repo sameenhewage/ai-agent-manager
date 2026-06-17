@@ -39,7 +39,6 @@ function createFakeGateway(activeChannels: ChannelLike[]) {
     id: string;
     tenantId: string;
     channelId: string;
-    agnoSessionId: string;
     externalContactId: string;
     firstAt: Date | null;
     lastAt: Date | null;
@@ -73,7 +72,6 @@ function createFakeGateway(activeChannels: ChannelLike[]) {
         id,
         tenantId: values.tenantId,
         channelId: values.channelId,
-        agnoSessionId: values.agnoSessionId,
         externalContactId: values.externalContactId,
         firstAt: values.firstAt,
         lastAt: values.lastAt,

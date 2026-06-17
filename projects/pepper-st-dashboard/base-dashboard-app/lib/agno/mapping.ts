@@ -52,7 +52,8 @@ export function resolveChannelForAgent(
   return { status: "ambiguous", channel: null };
 }
 
-/** The opaque Agno session key — stored as `app_conversations.agno_session_id` (link by value). */
+/** The opaque Agno session key — the provider session link value
+ *  (`app_conversation_sessions.external_session_id`, link by value; no FK into `ai.*`). */
 export function deriveSessionKey(session: AgnoSession): string {
   return session.session_id;
 }
@@ -74,7 +75,6 @@ export interface ConversationIds {
 }
 
 export interface ConversationValues extends ConversationIds {
-  agnoSessionId: string;
   status: "open";
   firstAt: Date | null;
   lastAt: Date | null;
@@ -86,7 +86,9 @@ export function buildConversationValues(
 ): ConversationValues {
   return {
     ...ids,
-    agnoSessionId: deriveSessionKey(session), // opaque session_id; stored as TEXT, no FK into ai.*
+    // ADR-0016 Gate C.3: the conversation is the CONTACT THREAD (keyed by external_contact_id).
+    // The provider session id is no longer stored here — it lives ONLY on the session link
+    // (app_conversation_sessions.external_session_id, built by buildSessionLinkValues).
     status: "open", // dashboard-owned default (CHECK: open|resolved|archived)
     firstAt: epochSecondsToDate(session.created_at),
     lastAt: epochSecondsToDate(session.updated_at),

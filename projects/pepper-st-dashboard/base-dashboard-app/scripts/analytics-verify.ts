@@ -60,8 +60,12 @@ async function main() {
     tokens: string;
     cost: string;
   }>(
+    // ADR-0016 Gate C.3: provider sessions live in app_conversation_sessions (no agno_session_id).
+    // Mirror the service universe EXACTLY — active (non-archived) in-range conversations, aggregating
+    // turns/tokens/cost across ALL of each thread's linked live sessions. LEFT JOINs keep a
+    // sessionless conversation counted (contributing zero), matching getAnalyticsData totals.
     `select
-        count(*)::int as convs,
+        count(distinct c.id)::int as convs,
         coalesce(sum(jsonb_array_length(
           case when jsonb_typeof(s.runs::jsonb) = 'array' then s.runs::jsonb else '[]'::jsonb end
         )), 0) as turns,
@@ -70,9 +74,12 @@ async function main() {
        from dashboard.app_conversations c
        join dashboard.app_tenants t  on t.id = c.tenant_id  and t.slug = 'pepper-st'
        join dashboard.app_channels ch on ch.id = c.channel_id and ch.channel_key = 'whatsapp-main'
-       join ai.agno_sessions s on s.session_id = c.agno_session_id
-                              and s.agent_id = (t.id::text || ':' || ch.id::text)
-      where c.last_at >= $1 and c.last_at < $2`,
+       left join dashboard.app_conversation_sessions acs
+              on acs.conversation_id = c.id and acs.tenant_id = c.tenant_id
+       left join ai.agno_sessions s
+              on s.session_id = acs.external_session_id
+             and s.agent_id = (t.id::text || ':' || ch.id::text)
+      where c.status <> 'archived' and c.last_at >= $1 and c.last_at < $2`,
     [data.range.fromISO, data.range.toISO]
   );
   const direct = sql.rows[0];
@@ -121,15 +128,19 @@ async function main() {
       where t.slug = 'pepper-st' limit 1`
   );
   const agentId = agentRes.rows[0]?.agent_id ?? "";
-  const idsRes = await pool.query<{ agno_session_id: string }>(
-    `select c.agno_session_id
+  const idsRes = await pool.query<{ session_id: string }>(
+    // ADR-0016 Gate C.3: the active/in-range universe's provider session ids come from the session
+    // links (a thread may hold several), not a per-conversation column.
+    `select acs.external_session_id as session_id
        from dashboard.app_conversations c
        join dashboard.app_tenants t  on t.id = c.tenant_id  and t.slug = 'pepper-st'
        join dashboard.app_channels ch on ch.id = c.channel_id and ch.channel_key = 'whatsapp-main'
+       join dashboard.app_conversation_sessions acs
+              on acs.conversation_id = c.id and acs.tenant_id = c.tenant_id
       where c.status <> 'archived' and c.last_at >= $1 and c.last_at < $2`,
     [data.range.fromISO, data.range.toISO]
   );
-  const ids = idsRes.rows.map((r) => r.agno_session_id);
+  const ids = idsRes.rows.map((r) => r.session_id);
   const RUNS_SELECT = `select session_id, runs,
             (session_data->'session_metrics'->>'total_tokens') tt,
             (session_data->'session_metrics'->>'cost') c

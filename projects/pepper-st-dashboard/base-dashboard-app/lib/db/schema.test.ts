@@ -131,16 +131,9 @@ describe("app_conversations", () => {
     expect(col.notNull).toBe(true);
   });
 
-  it("stores agno_session_id as text with NO foreign key into ai.*", () => {
-    const c = table("app_conversations");
-    const agno = column("app_conversations", "agno_session_id");
-    expect(agno.getSQLType()).toBe("text");
-    expect(agno.notNull).toBe(true);
-    for (const fk of c.foreignKeys) {
-      expect(getTableConfig(fk.reference().foreignTable).schema).toBe("dashboard");
-      const localCols = fk.reference().columns.map((col) => col.name);
-      expect(localCols).not.toContain("agno_session_id");
-    }
+  it("does NOT carry the legacy agno_session_id column (removed in Gate C.3 — sessions live in app_conversation_sessions)", () => {
+    const cols = table("app_conversations").columns.map((col) => col.name);
+    expect(cols).not.toContain("agno_session_id");
   });
 
   it("status is dashboard-owned and defaults to open", () => {
@@ -149,18 +142,17 @@ describe("app_conversations", () => {
     expect(status.default).toBe("open");
   });
 
-  // Slice 12D-B / ADR-0016 Gate C.2 — the legacy (tenant, channel, agno_session_id) uniqueness is
-  // KEPT for compatibility until Gate C.3 drops agno_session_id. The ENFORCED grain is now the
-  // contact-thread unique index (asserted below).
-  it("keeps the legacy unique on (tenant_id, channel_id, agno_session_id) until Gate C.3 (compatibility)", () => {
-    expect(uniqueSets("app_conversations")).toContain(
+  // ADR-0016 Gate C.3 — the legacy (tenant, channel, agno_session_id) uniqueness is REMOVED. The
+  // ENFORCED grain is the contact-thread unique index (asserted below).
+  it("does NOT keep the legacy unique on (tenant_id, channel_id, agno_session_id) (removed in Gate C.3)", () => {
+    expect(uniqueSets("app_conversations")).not.toContain(
       ["tenant_id", "channel_id", "agno_session_id"].sort().join(",")
     );
   });
 
-  // ADR-0016 Gate C.2 — the conversation grain is now the CONTACT THREAD: exactly ONE row per
+  // ADR-0016 Gate C.2/C.3 — the conversation grain is the CONTACT THREAD: exactly ONE row per
   // (tenant_id, channel_id, external_contact_id), enforced by a UNIQUE INDEX (applied after the
-  // live collapse). The legacy (tenant, channel, agno_session_id) unique stays until Gate C.3.
+  // live collapse). The legacy (tenant, channel, agno_session_id) unique was removed in Gate C.3.
   it("enforces ONE row per contact thread — a UNIQUE index on (tenant_id, channel_id, external_contact_id) (ADR-0016 Gate C.2)", () => {
     const idx = table("app_conversations").indexes.find(
       (i) => i.config.name === "app_conv_contact_thread_key"

@@ -38,6 +38,22 @@ async function main() {
   const pool = getPool();
   console.log(`[agno:archive-orphans] ${maskDbUrl()}`);
 
+  // ADR-0016 Gate C.3: app_conversations.agno_session_id was REMOVED, so the v1 "orphan" rule
+  // (session id absent from ai.*) no longer applies here. Guard so a post-C.3 run exits clearly
+  // instead of failing on the missing column. (v1 orphans were archived/cleaned before C.3.)
+  const guard = await pool.query<{ present: boolean }>(
+    `select exists(select 1 from information_schema.columns
+       where table_schema = 'dashboard' and table_name = 'app_conversations'
+         and column_name = 'agno_session_id') as present`
+  );
+  if (!guard.rows[0].present) {
+    console.log(
+      "[agno:archive-orphans] RETIRED — agno_session_id no longer exists (Gate C.3). No action taken."
+    );
+    await pool.end();
+    process.exit(0);
+  }
+
   // 1. Pre-count (read-only): exactly how many orphans WILL be archived, and why.
   const pre = await pool.query<{ total: number; live_sessions: number; orphans: number }>(
     `${ORPHAN_CTE}
